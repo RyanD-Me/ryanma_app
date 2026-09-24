@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>二麻オンライン</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/*STYLES_PLACEHOLDER*/
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <div class="title-row">
+    <h1>二麻オンライン</h1>
+  </div>
+  <div id="app"></div>
+</div>
+<script>
+/*ENGINE_PLACEHOLDER*/
+</script>
+<script>
+/*APP_PLACEHOLDER*/
+</script>
+<script>
+/*ONLINE_SHARED_PLACEHOLDER*/
+</script>
+<script>
+/*WS_PLACEHOLDER*/
+</script>
+<script>
+/*
+ * スマートフォン横向きでは、配置(縦に並ぶ順番)はそのままに、画面全体を画面の高さに
+ * 収まるよう縦横同じ比率で縮小する(=縦に合わせて横も縮む)。これで縦スクロールが不要になる。
+ * transform: scale で縮小し、縮んだぶん空いた下側の余白は負の margin-bottom で詰める。
+ * 内容の高さ(対局画面・ロビー・結果画面など)が変わるたびに ResizeObserver で再計算する
+ * (offsetHeight は transform の影響を受けないため、縮小後の再計算がループすることはない)。
+ * 横向き判定は styles.css の「スマートフォン・横向き」と同じ条件。
+ */
+(function () {
+  var mq = window.matchMedia("(max-height: 480px) and (orientation: landscape)");
+  var shell = document.querySelector(".app-shell");
+  if (!shell) return;
+  function fit() {
+    var scale = 1;
+    if (mq.matches) {
+      var natural = shell.offsetHeight;
+      if (natural > 0) scale = Math.min(1, window.innerHeight / natural);
+    }
+    if (scale < 1) {
+      shell.style.transformOrigin = "top center";
+      shell.style.transform = "scale(" + scale + ")";
+      shell.style.marginBottom = -(shell.offsetHeight * (1 - scale)) + "px";
+    } else {
+      shell.style.transform = "";
+      shell.style.transformOrigin = "";
+      shell.style.marginBottom = "";
+    }
+  }
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(shell);
+  window.addEventListener("resize", fit);
+  window.addEventListener("orientationchange", function () { setTimeout(fit, 100); });
+  if (mq.addEventListener) mq.addEventListener("change", fit);
+  fit();
+})();
+</script>
+</body>
+</html>

@@ -1674,6 +1674,81 @@ h1, .round-badge, .log-title {
   .options-screen .room-options-hint { font-size: 0.68rem; }
 }
 
+/* オプション画面の左列(プレイヤー名・サーバーURL) */
+.settings-col { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------------- スマートフォン横向き: ロビー・オプション画面 ----------------
+   縦に並べると画面の高さに収まらず全体が縮小されてしまうため、横向き専用の配置にする。
+   ロビー: 見出しを小さくし、メニューのボタンを2列(自動マッチングは横幅いっぱい)、
+           プレイヤー名・サーバー・オンライン人数は右側の欄にまとめる。
+   オプション: 設定画面(.options-screen)と同じく、1行目に画面名と保存・戻る、2行目に
+           左「プレイヤー名・サーバーURL」右「音」を並べる。 */
+@media (max-height: 480px) and (orientation: landscape) {
+  .app-shell:has(.lobby-main) {
+    max-width: none;
+    padding: 0 16px;
+    box-sizing: border-box;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .title-row:has(~ #app .lobby-main) { margin-bottom: 8px; }
+  .title-row:has(~ #app .lobby-main) h1 { font-size: 1.15rem; }
+  .lobby-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 30%);
+    grid-template-areas:
+      "resume resume"
+      "menu info";
+    align-items: center;
+    gap: 10px 16px;
+    padding: 12px 16px;
+  }
+  .lobby-main > .lobby-resume { grid-area: resume; flex-direction: row; align-items: center; justify-content: space-between; padding: 6px 12px; }
+  .lobby-main > .lobby-online {
+    grid-area: menu;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+  }
+  .lobby-main > .lobby-online .btn { padding: 8px 10px; font-size: 0.85rem; }
+  .lobby-main > .lobby-online .btn-primary { grid-column: 1 / -1; }
+  .lobby-main > .lobby-current {
+    grid-area: info;
+    align-self: stretch;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 10px;
+    border-left: 1px solid var(--panel-border);
+  }
+
+  /* オプション: 左列(名前・URL)と音の欄を横に並べる */
+  .settings-screen .options-fields > .settings-col { flex: 1 1 0; min-width: 0; gap: 10px; }
+  .settings-screen .options-fields > .room-options-group { flex: 1 1 0; }
+  .settings-screen .settings-field { gap: 4px; }
+  .settings-screen .lobby-code-input { padding: 6px 10px; font-size: 0.9rem; }
+  /* 音の欄: チェックボックスを2×2、音量・BGM音量のスライダーも左右に並べて高さを詰める */
+  .settings-screen .options-fields > .room-options-group {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: start;
+    gap: 8px 14px;
+  }
+  .settings-screen .settings-note { display: none; }
+  .settings-screen .room-options-group > .settings-label:nth-of-type(1) { grid-area: 3 / 1; }
+  .settings-screen .room-options-group > input.settings-volume:nth-of-type(1) { grid-area: 4 / 1; }
+  .settings-screen .room-options-group > .settings-label:nth-of-type(2) { grid-area: 3 / 2; }
+  .settings-screen .room-options-group > input.settings-volume:nth-of-type(2) { grid-area: 4 / 2; }
+  .settings-screen .room-options-group > .settings-reset-btn { grid-area: 5 / 1; justify-self: start; }
+  .settings-screen .settings-volume { margin: 0; width: 100%; }
+}
+/* オプション画面のチェックボックス: 文字が長い場合はチェックボックスの横で折り返す(下に回り込まない) */
+.settings-screen .room-options-choice { flex-wrap: nowrap; align-items: flex-start; }
+.settings-screen .room-options-choice > input { flex-shrink: 0; margin-top: 0.2em; }
+.settings-screen .room-options-choice > span { min-width: 0; }
+
 </style>
 </head>
 <body>
@@ -9969,6 +10044,9 @@ class WsRoomController {
     this.allowSpectate = allowSpectate !== false;
     /** この対局を観戦している人数(サーバーから通知される) */
     this.spectatorCount = 0;
+    /** サーバーに接続中の人数(この接続自身も含む。サーバーから通知される)。未受信は null */
+    this.onlineCount = null;
+    this._onlineCountListeners = new Set();
     this.code = null;
     this.mySeat = null;
     this.token = null;
@@ -10315,6 +10393,23 @@ class WsRoomController {
       if (this.onConnectionChange) this.onConnectionChange();
       return;
     }
+    if (msg.type === "online-count") {
+      this.onlineCount = typeof msg.count === "number" ? msg.count : null;
+      for (const cb of this._onlineCountListeners) cb(this.onlineCount);
+      return;
+    }
+  }
+
+  /**
+   * この接続に届くオンライン人数を購読する(自動マッチングの待機画面用)。すぐに1回、
+   * 以後は変わるたびに cb が呼ばれる。人数表示のためだけに別の接続を張ると、自分が
+   * 2人分として数えられてしまうため、待機中はこの接続に届く人数を使う。
+   * @returns {() => void} 購読解除
+   */
+  watchOnlineCount(cb) {
+    this._onlineCountListeners.add(cb);
+    cb(this.onlineCount);
+    return () => this._onlineCountListeners.delete(cb);
   }
 
   /** 相手の退室(reason "left")・再接続の猶予切れ("timeout")で対局を終える */
@@ -10952,14 +11047,17 @@ const MahjongLobby = (function () {
   }
 
   /** オンライン人数を表示する小さな行のDOMを作る(値はまだ無ければ「-」)。以後は自動で更新される。 */
-  function buildOnlineCountRow() {
+  function buildOnlineCountRow(source) {
     const row = el("p", { className: "online-count" });
     const label = document.createTextNode("オンライン: ");
     const value = el("span", { className: "online-count-value", textContent: "-" });
     row.appendChild(label);
     row.appendChild(value);
     row.appendChild(document.createTextNode("人"));
-    const unsubscribe = watchOnlineCount((count) => {
+    // source: 人数の購読元(省略時は人数表示専用の接続)。自動マッチングの待機中は、
+    // マッチング用の接続に届く人数を使う(専用の接続を別に張ると自分が2人分数えられるため)
+    const subscribe = source || watchOnlineCount;
+    const unsubscribe = subscribe((count) => {
       value.textContent = count == null ? "-" : String(count);
     });
     // この行がDOMから外れたら(画面遷移で root.innerHTML が書き換わったら)購読も止める。
@@ -11022,7 +11120,8 @@ const MahjongLobby = (function () {
       cleanup();
       root.innerHTML = "";
 
-      const wrap = el("div", { className: "lobby" });
+      // lobby-main: スマホ横向きでは、ボタンを2列に並べて画面の高さに収める専用の配置になる
+      const wrap = el("div", { className: "lobby lobby-main" });
 
       // 前回のオンライン対局の途中でページを閉じた・再読み込みした場合は、同じ座席に戻れる
       // (サーバー側で切断から5分間、座席が予約されている)。
@@ -11300,8 +11399,14 @@ const MahjongLobby = (function () {
     /** 「オプション」: プレイヤー名の設定と、サーバーURLの確認・変更 */
     function showSettings() {
       root.innerHTML = "";
-      const wrap = el("div", { className: "lobby room-options" });
+      // options-screen: スマホ横向きでは CPU対戦・ルームの設定画面と同じく、欄を横に並べる配置になる
+      const wrap = el("div", { className: "lobby room-options options-screen settings-screen" });
       wrap.appendChild(el("h2", { className: "room-options-title", textContent: "オプション" }));
+      // 左: プレイヤー名・サーバーURL / 右: 音
+      const fieldsBox = el("div", { className: "options-fields" });
+      const basicCol = el("div", { className: "settings-col" });
+      fieldsBox.appendChild(basicCol);
+      wrap.appendChild(fieldsBox);
 
       const nameField = el("label", { className: "settings-field" });
       nameField.appendChild(el("span", { className: "settings-label", textContent: "プレイヤー名" }));
@@ -11313,7 +11418,7 @@ const MahjongLobby = (function () {
         value: loadLastPlayerName(),
       });
       nameField.appendChild(nameInput);
-      wrap.appendChild(nameField);
+      basicCol.appendChild(nameField);
 
       const urlField = el("label", { className: "settings-field" });
       urlField.appendChild(el("span", { className: "settings-label", textContent: "サーバーURL" }));
@@ -11327,25 +11432,29 @@ const MahjongLobby = (function () {
       resetBtn.addEventListener("click", () => (urlInput.value = DEFAULT_SERVER_URL));
       urlField.appendChild(resetBtn);
       urlField.appendChild(el("span", { className: "settings-hint", textContent: `既定: ${DEFAULT_SERVER_URL}` }));
-      wrap.appendChild(urlField);
+      basicCol.appendChild(urlField);
 
       // 効果音・発声(対局画面のスピーカーのボタンでも、すべての音をまとめて消せる)
       const sound = MahjongSound.getSettings();
       const soundGroup = el("fieldset", { className: "room-options-group" });
       soundGroup.appendChild(el("legend", { textContent: "音" }));
-      const checkbox = (text, checked) => {
+      // note は括弧書きの補足。スマホ横向きでは幅が足りないので隠す(styles.css)
+      const checkbox = (text, note, checked) => {
         const label = el("label", { className: "room-options-choice" });
         const cb = el("input", { type: "checkbox" });
         cb.checked = checked;
         label.appendChild(cb);
-        label.appendChild(document.createTextNode(" " + text));
+        // 文字と補足は1つの塊にまとめる(別々だと縦向きで補足だけが次の行に回ってしまう)
+        const textEl = el("span", { textContent: " " + text });
+        if (note) textEl.appendChild(el("span", { className: "settings-note", textContent: note }));
+        label.appendChild(textEl);
         soundGroup.appendChild(label);
         return cb;
       };
-      const seCb = checkbox("効果音(打牌・ツモ・リーチ棒・鳴き・点棒・選択肢・ボタンなど)", sound.se);
-      const voiceCb = checkbox("発声(ポン・カン・リーチ・ロン・ツモ)", sound.voice);
-      const bgmCb = checkbox("BGM(ロビー・待機画面)", sound.bgm);
-      const muteCb = checkbox("すべての音を消す(消音)", sound.muted);
+      const seCb = checkbox("効果音", "(打牌・ツモ・リーチ棒・鳴き・点棒・選択肢・ボタンなど)", sound.se);
+      const voiceCb = checkbox("発声", "(ポン・カン・リーチ・ロン・ツモ)", sound.voice);
+      const bgmCb = checkbox("BGM", "(ロビー・待機画面)", sound.bgm);
+      const muteCb = checkbox("消音", "(すべての音を消す)", sound.muted);
       const volLabel = el("span", { className: "settings-label", textContent: `音量: ${Math.round(sound.volume * 100)}` });
       const volInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
       volInput.value = String(Math.round(sound.volume * 100));
@@ -11367,7 +11476,7 @@ const MahjongLobby = (function () {
         MahjongSound.preview({ se: seCb.checked, voice: voiceCb.checked, volume: Number(volInput.value) / 100 })
       );
       soundGroup.appendChild(previewBtn);
-      wrap.appendChild(soundGroup);
+      fieldsBox.appendChild(soundGroup);
 
       const msg = el("p", { className: "lobby-error" });
       wrap.appendChild(msg);
@@ -11605,7 +11714,7 @@ const MahjongLobby = (function () {
             wrap.appendChild(el("div", { className: "connection-spinner" }));
             const hint = el("p", { className: "lobby-peer-status", textContent: "相手が見つかると自動的に対局が始まります。" });
             wrap.appendChild(hint);
-            wrap.appendChild(buildOnlineCountRow());
+            wrap.appendChild(buildOnlineCountRow((cb) => controller.watchOnlineCount(cb)));
             const cancelBtn = el("button", { type: "button", className: "btn", textContent: "キャンセル" });
             cancelBtn.addEventListener("click", () => {
               clearTimeout(matchWaitTimer);

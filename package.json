@@ -1,0 +1,22 @@
+{
+  "name": "two-player-mahjong",
+  "version": "0.1.0",
+  "private": true,
+  "description": "独自ルールの二人麻雀(日本式リーチ麻雀ベース)",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "bundle": "node build-bundle.js",
+    "html": "node build-html-ws.js",
+    "dev": "npm run build && npm run bundle && npm run html",
+    "test": "npm run build && node --test \"tests/**/*.test.js\" \"server/**/*.test.js\"",
+    "serve": "npx --yes http-server frontend -p 8080 -c-1",
+    "server": "node server/server.js",
+    "release": "npm run dev && node -e \"require('fs').copyFileSync('frontend/index-ws.html','index.html')\""
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
