@@ -1099,6 +1099,23 @@ const MahjongLobby = (function () {
       /* ignore */
     }
   }
+  const ROOM_DEALER_STORAGE_KEY = "mahjong_room_dealer";
+  /** 前回ルーム作成時に選んだ起家の決め方("self" | "opponent" | "random"。既定 "self") */
+  function loadRoomDealer() {
+    try {
+      const v = localStorage.getItem(ROOM_DEALER_STORAGE_KEY);
+      return ["self", "opponent", "random"].includes(v) ? v : "self";
+    } catch (e) {
+      return "self";
+    }
+  }
+  function saveRoomDealer(v) {
+    try {
+      localStorage.setItem(ROOM_DEALER_STORAGE_KEY, v);
+    } catch (e) {
+      /* ignore */
+    }
+  }
   const TEST_PLAY_OPTIONS_STORAGE_KEY = "mahjong_testplay_options";
   /** 前回のテストプレイの設定 { cpuType, timeControl, dealer }(無ければ既定値) */
   function loadTestPlayOptions() {
@@ -1505,7 +1522,7 @@ const MahjongLobby = (function () {
     }
 
     /**
-     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)を決める。
+     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
      * 決めた設定はルーム作成者(ホスト)から対局データと一緒に相手へ配られる。
      */
     function showRoomOptions(serverUrl, name) {
@@ -1518,13 +1535,24 @@ const MahjongLobby = (function () {
         ],
         loadAllowSpectate() ? "yes" : "no"
       );
-      showOptionsScreen("ルームの設定", [time, spectate], "ルームを作成する", () => {
+      const dealer = buildRadioField(
+        "起家(最初の親)",
+        [
+          ["self", "自分"],
+          ["opponent", "相手"],
+          ["random", "ランダム"],
+        ],
+        loadRoomDealer()
+      );
+      showOptionsScreen("ルームの設定", [time, spectate, dealer], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
         const allowSpectate = spectate.read() === "yes";
         saveAllowSpectate(allowSpectate);
-        startOnline("create", serverUrl, null, name, r.value, { allowSpectate });
+        const dealerChoice = dealer.read();
+        saveRoomDealer(dealerChoice);
+        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice });
         return null;
       });
     }
@@ -1961,6 +1989,8 @@ const MahjongLobby = (function () {
           // ルーム作成時に選んだ持ち時間(自動マッチング・参加時は既定値。参加側は
           // 対局データが届いた時点でホストの設定に置き換わる)
           timeControl: timeControl !== undefined ? timeControl : DEFAULT_TIME_CONTROL,
+          // ルーム作成時に選んだ起家の決め方(ホストだけが使う。自動マッチングはホストが起家)
+          dealerChoice: roomOptions.dealerChoice,
         });
       } catch (err) {
         clearTimeout(matchWaitTimer);

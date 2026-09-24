@@ -6290,11 +6290,20 @@ class MahjongApp {
     }
   }
 
+  /**
+   * 新しい対局の起家(最初の親)にする Seat。ローカル対戦・CPU対戦は常に east
+   * (CPU対戦は人が座る家を変えて起家を選ぶ)。オンライン対戦はルーム作成時の設定で決める。
+   */
+  chooseStartingDealer() {
+    return "east";
+  }
+
   newGame() {
     const { wall } = E.buildWall();
     const revealed = E.revealNextDoraIndicator(wall);
-    // 配牌は親(東家)から順に配る。この対局の起家は常に east
-    const { wall: dealtWall, hands } = E.dealInitialHands(revealed, ["east", "south"]);
+    const dealer = this.chooseStartingDealer();
+    // 配牌は親(東家)から順に配る
+    const { wall: dealtWall, hands } = E.dealInitialHands(revealed, [dealer, E.otherSeat(dealer)]);
 
     this.state = {
       gameId: "local",
@@ -6306,8 +6315,8 @@ class MahjongApp {
       // 「局が変わった」ことの判定(持ち時間・トグルのリセット)にはこちらを使う。
       roundSerial: 1,
       riichiSticks: 0,
-      startingDealer: "east",
-      dealer: "east",
+      startingDealer: dealer,
+      dealer,
       kanCount: 0,
       fourKanAbortivePending: false,
       wall: dealtWall,
@@ -6315,7 +6324,7 @@ class MahjongApp {
         east: Object.assign({}, E.createInitialPlayerState("east", 45000), { hand: hands.east }),
         south: Object.assign({}, E.createInitialPlayerState("south", 45000), { hand: hands.south }),
       },
-      currentTurn: "east",
+      currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
       totalRounds: 8,
@@ -6338,7 +6347,7 @@ class MahjongApp {
     this._roundTogglesResetIndex = this.roundKey();
     this._timerRoundKey = null;
     this.clearResultTimers();
-    this.addLog(`新しい対局を開始しました(起家: ${this.seatLabel(this.state.dealer)}家)`);
+    this.addLog(`新しい対局を開始しました(起家: ${this.playerName(dealer)})`);
     this.publish();
   }
 
@@ -7218,7 +7227,10 @@ class MahjongApp {
   renderFinalStandings() {
     const wrap = document.createElement("div");
     wrap.className = "result-scores final-standings";
-    const seats = ["east", "south"].sort((a, b) => this.state.players[b].score - this.state.players[a].score);
+    const first = this.state.startingDealer || "east";
+    const seats = [first, first === "east" ? "south" : "east"].sort(
+      (a, b) => this.state.players[b].score - this.state.players[a].score
+    );
     seats.forEach((seat, i) => {
       const row = document.createElement("div");
       row.className = "result-score-row final-row" + (i === 0 ? " final-top" : "");
@@ -9149,15 +9161,19 @@ const OnlineEngine = MahjongEngine;
 class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
-   * @param {{roomController: object, mySeat: "east"|"south", hostSeat: "east"|"south", onExit?: Function}} opts
+   * @param {{roomController: object, mySeat: "east"|"south", hostSeat: "east"|"south", onExit?: Function,
+   *   dealerChoice?: "self"|"opponent"|"random"}} opts
+   *   dealerChoice: 起家の決め方(ホスト=ルーム作成者から見て。既定 "self" = ホストが起家)
    */
-  constructor(root, { roomController, mySeat, hostSeat, onExit, timeControl, isMatch }) {
+  constructor(root, { roomController, mySeat, hostSeat, onExit, timeControl, isMatch, dealerChoice }) {
     // 持ち時間はホスト(ルーム作成者)の設定を使う。ゲスト側の値は、対局データが届いた時点で
     // ホストの設定に置き換わる(_onRoomDoc)。
     super(root, { autoStart: false, onExit, timeControl });
     this.roomController = roomController;
     this.mySeat = mySeat;
     this.hostSeat = hostSeat;
+    /** 起家の決め方(ホストの設定)。対局データと一緒に配るので、再接続後の再戦でも引き継がれる */
+    this.dealerChoice = ["self", "opponent", "random"].includes(dealerChoice) ? dealerChoice : "self";
     this.onExit = onExit;
     /** 自動マッチングで組まれた対局か(ルームコードは内部用なので待機画面に出さない) */
     this.isMatch = !!isMatch;
@@ -9306,6 +9322,8 @@ class OnlineMahjongApp extends MahjongApp {
       rematchVotes: this.rematchVotes,
       // 持ち時間の設定(ホストの設定)。null は持ち時間なし
       timeControl: this.timeControl,
+      // 起家の決め方(ホストの設定)
+      dealerChoice: this.dealerChoice,
       log: this.log,
     };
     const json = JSON.stringify(game);
@@ -9318,12 +9336,21 @@ class OnlineMahjongApp extends MahjongApp {
     });
   }
 
+  /** 新しい対局(最初の対局・再戦)の起家。ルーム作成時の設定で決める(ランダムは対局ごとに選び直す) */
+  chooseStartingDealer() {
+    const guestSeat = OnlineEngine.otherSeat(this.hostSeat);
+    if (this.dealerChoice === "opponent") return guestSeat;
+    if (this.dealerChoice === "random") return Math.random() < 0.5 ? this.hostSeat : guestSeat;
+    return this.hostSeat;
+  }
+
   /** ホスト側: 両者の着席(接続)が揃った時点で対局を初期化して配信する。 */
   startGameAsHost() {
     const { wall } = OnlineEngine.buildWall();
     const revealed = OnlineEngine.revealNextDoraIndicator(wall);
-    // 配牌は親(東家)から順に配る。オンライン対戦の起家は常に east
-    const { wall: dealtWall, hands } = OnlineEngine.dealInitialHands(revealed, ["east", "south"]);
+    const dealer = this.chooseStartingDealer();
+    // 配牌は親(東家)から順に配る
+    const { wall: dealtWall, hands } = OnlineEngine.dealInitialHands(revealed, [dealer, OnlineEngine.otherSeat(dealer)]);
 
     this.state = {
       gameId: this.roomController.code || "online",
@@ -9333,8 +9360,8 @@ class OnlineMahjongApp extends MahjongApp {
       overallRoundIndex: 1,
       roundSerial: 1,
       riichiSticks: 0,
-      startingDealer: "east",
-      dealer: "east",
+      startingDealer: dealer,
+      dealer,
       kanCount: 0,
       fourKanAbortivePending: false,
       wall: dealtWall,
@@ -9342,7 +9369,7 @@ class OnlineMahjongApp extends MahjongApp {
         east: Object.assign({}, OnlineEngine.createInitialPlayerState("east", 45000), { hand: hands.east }),
         south: Object.assign({}, OnlineEngine.createInitialPlayerState("south", 45000), { hand: hands.south }),
       },
-      currentTurn: "east",
+      currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
       totalRounds: 8,
@@ -9359,7 +9386,7 @@ class OnlineMahjongApp extends MahjongApp {
     this._roundTogglesResetIndex = this.roundKey();
     this._timerRoundKey = null;
     this.log = [];
-    this.addLog(`オンライン対戦を開始しました(起家: ${this.seatLabel(this.state.dealer)}家)`);
+    this.addLog(`オンライン対戦を開始しました(起家: ${this.playerName(dealer)})`);
     this.publish();
   }
 
@@ -9429,6 +9456,7 @@ class OnlineMahjongApp extends MahjongApp {
       this.revealUraDora = !!g.revealUraDora;
       // 持ち時間はホストの設定に合わせる(古いデータで項目が無い場合は手元の値のまま)
       if (g.timeControl !== undefined) this.timeControl = g.timeControl;
+      if (g.dealerChoice !== undefined) this.dealerChoice = g.dealerChoice;
       // 結果画面の間、同じ流局結果が何度も届いても再表示タイマーをやり直さないよう、
       // lastWin と同様に内容が変わった時だけ反映する。
       const incomingExhaustive = g.lastExhaustiveOutcome || null;
@@ -9631,6 +9659,10 @@ class OnlineMahjongApp extends MahjongApp {
         tc.className = "lobby-peer-status";
         tc.textContent = `持ち時間: ${timeControlLabel(this.timeControl)}`;
         wrap.appendChild(tc);
+        const dc = document.createElement("p");
+        dc.className = "lobby-peer-status";
+        dc.textContent = `起家: ${{ self: "自分", opponent: "相手", random: "ランダム" }[this.dealerChoice]}`;
+        wrap.appendChild(dc);
       }
     } else {
       const hint = document.createElement("p");
@@ -10886,6 +10918,23 @@ const MahjongLobby = (function () {
       /* ignore */
     }
   }
+  const ROOM_DEALER_STORAGE_KEY = "mahjong_room_dealer";
+  /** 前回ルーム作成時に選んだ起家の決め方("self" | "opponent" | "random"。既定 "self") */
+  function loadRoomDealer() {
+    try {
+      const v = localStorage.getItem(ROOM_DEALER_STORAGE_KEY);
+      return ["self", "opponent", "random"].includes(v) ? v : "self";
+    } catch (e) {
+      return "self";
+    }
+  }
+  function saveRoomDealer(v) {
+    try {
+      localStorage.setItem(ROOM_DEALER_STORAGE_KEY, v);
+    } catch (e) {
+      /* ignore */
+    }
+  }
   const TEST_PLAY_OPTIONS_STORAGE_KEY = "mahjong_testplay_options";
   /** 前回のテストプレイの設定 { cpuType, timeControl, dealer }(無ければ既定値) */
   function loadTestPlayOptions() {
@@ -11292,7 +11341,7 @@ const MahjongLobby = (function () {
     }
 
     /**
-     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)を決める。
+     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
      * 決めた設定はルーム作成者(ホスト)から対局データと一緒に相手へ配られる。
      */
     function showRoomOptions(serverUrl, name) {
@@ -11305,13 +11354,24 @@ const MahjongLobby = (function () {
         ],
         loadAllowSpectate() ? "yes" : "no"
       );
-      showOptionsScreen("ルームの設定", [time, spectate], "ルームを作成する", () => {
+      const dealer = buildRadioField(
+        "起家(最初の親)",
+        [
+          ["self", "自分"],
+          ["opponent", "相手"],
+          ["random", "ランダム"],
+        ],
+        loadRoomDealer()
+      );
+      showOptionsScreen("ルームの設定", [time, spectate, dealer], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
         const allowSpectate = spectate.read() === "yes";
         saveAllowSpectate(allowSpectate);
-        startOnline("create", serverUrl, null, name, r.value, { allowSpectate });
+        const dealerChoice = dealer.read();
+        saveRoomDealer(dealerChoice);
+        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice });
         return null;
       });
     }
@@ -11748,6 +11808,8 @@ const MahjongLobby = (function () {
           // ルーム作成時に選んだ持ち時間(自動マッチング・参加時は既定値。参加側は
           // 対局データが届いた時点でホストの設定に置き換わる)
           timeControl: timeControl !== undefined ? timeControl : DEFAULT_TIME_CONTROL,
+          // ルーム作成時に選んだ起家の決め方(ホストだけが使う。自動マッチングはホストが起家)
+          dealerChoice: roomOptions.dealerChoice,
         });
       } catch (err) {
         clearTimeout(matchWaitTimer);

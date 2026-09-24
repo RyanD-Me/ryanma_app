@@ -38,15 +38,19 @@ const OnlineEngine = MahjongEngine;
 class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
-   * @param {{roomController: object, mySeat: "east"|"south", hostSeat: "east"|"south", onExit?: Function}} opts
+   * @param {{roomController: object, mySeat: "east"|"south", hostSeat: "east"|"south", onExit?: Function,
+   *   dealerChoice?: "self"|"opponent"|"random"}} opts
+   *   dealerChoice: 起家の決め方(ホスト=ルーム作成者から見て。既定 "self" = ホストが起家)
    */
-  constructor(root, { roomController, mySeat, hostSeat, onExit, timeControl, isMatch }) {
+  constructor(root, { roomController, mySeat, hostSeat, onExit, timeControl, isMatch, dealerChoice }) {
     // 持ち時間はホスト(ルーム作成者)の設定を使う。ゲスト側の値は、対局データが届いた時点で
     // ホストの設定に置き換わる(_onRoomDoc)。
     super(root, { autoStart: false, onExit, timeControl });
     this.roomController = roomController;
     this.mySeat = mySeat;
     this.hostSeat = hostSeat;
+    /** 起家の決め方(ホストの設定)。対局データと一緒に配るので、再接続後の再戦でも引き継がれる */
+    this.dealerChoice = ["self", "opponent", "random"].includes(dealerChoice) ? dealerChoice : "self";
     this.onExit = onExit;
     /** 自動マッチングで組まれた対局か(ルームコードは内部用なので待機画面に出さない) */
     this.isMatch = !!isMatch;
@@ -195,6 +199,8 @@ class OnlineMahjongApp extends MahjongApp {
       rematchVotes: this.rematchVotes,
       // 持ち時間の設定(ホストの設定)。null は持ち時間なし
       timeControl: this.timeControl,
+      // 起家の決め方(ホストの設定)
+      dealerChoice: this.dealerChoice,
       log: this.log,
     };
     const json = JSON.stringify(game);
@@ -207,12 +213,21 @@ class OnlineMahjongApp extends MahjongApp {
     });
   }
 
+  /** 新しい対局(最初の対局・再戦)の起家。ルーム作成時の設定で決める(ランダムは対局ごとに選び直す) */
+  chooseStartingDealer() {
+    const guestSeat = OnlineEngine.otherSeat(this.hostSeat);
+    if (this.dealerChoice === "opponent") return guestSeat;
+    if (this.dealerChoice === "random") return Math.random() < 0.5 ? this.hostSeat : guestSeat;
+    return this.hostSeat;
+  }
+
   /** ホスト側: 両者の着席(接続)が揃った時点で対局を初期化して配信する。 */
   startGameAsHost() {
     const { wall } = OnlineEngine.buildWall();
     const revealed = OnlineEngine.revealNextDoraIndicator(wall);
-    // 配牌は親(東家)から順に配る。オンライン対戦の起家は常に east
-    const { wall: dealtWall, hands } = OnlineEngine.dealInitialHands(revealed, ["east", "south"]);
+    const dealer = this.chooseStartingDealer();
+    // 配牌は親(東家)から順に配る
+    const { wall: dealtWall, hands } = OnlineEngine.dealInitialHands(revealed, [dealer, OnlineEngine.otherSeat(dealer)]);
 
     this.state = {
       gameId: this.roomController.code || "online",
@@ -222,8 +237,8 @@ class OnlineMahjongApp extends MahjongApp {
       overallRoundIndex: 1,
       roundSerial: 1,
       riichiSticks: 0,
-      startingDealer: "east",
-      dealer: "east",
+      startingDealer: dealer,
+      dealer,
       kanCount: 0,
       fourKanAbortivePending: false,
       wall: dealtWall,
@@ -231,7 +246,7 @@ class OnlineMahjongApp extends MahjongApp {
         east: Object.assign({}, OnlineEngine.createInitialPlayerState("east", 45000), { hand: hands.east }),
         south: Object.assign({}, OnlineEngine.createInitialPlayerState("south", 45000), { hand: hands.south }),
       },
-      currentTurn: "east",
+      currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
       totalRounds: 8,
@@ -248,7 +263,7 @@ class OnlineMahjongApp extends MahjongApp {
     this._roundTogglesResetIndex = this.roundKey();
     this._timerRoundKey = null;
     this.log = [];
-    this.addLog(`オンライン対戦を開始しました(起家: ${this.seatLabel(this.state.dealer)}家)`);
+    this.addLog(`オンライン対戦を開始しました(起家: ${this.playerName(dealer)})`);
     this.publish();
   }
 
@@ -318,6 +333,7 @@ class OnlineMahjongApp extends MahjongApp {
       this.revealUraDora = !!g.revealUraDora;
       // 持ち時間はホストの設定に合わせる(古いデータで項目が無い場合は手元の値のまま)
       if (g.timeControl !== undefined) this.timeControl = g.timeControl;
+      if (g.dealerChoice !== undefined) this.dealerChoice = g.dealerChoice;
       // 結果画面の間、同じ流局結果が何度も届いても再表示タイマーをやり直さないよう、
       // lastWin と同様に内容が変わった時だけ反映する。
       const incomingExhaustive = g.lastExhaustiveOutcome || null;
@@ -520,6 +536,10 @@ class OnlineMahjongApp extends MahjongApp {
         tc.className = "lobby-peer-status";
         tc.textContent = `持ち時間: ${timeControlLabel(this.timeControl)}`;
         wrap.appendChild(tc);
+        const dc = document.createElement("p");
+        dc.className = "lobby-peer-status";
+        dc.textContent = `起家: ${{ self: "自分", opponent: "相手", random: "ランダム" }[this.dealerChoice]}`;
+        wrap.appendChild(dc);
       }
     } else {
       const hint = document.createElement("p");
