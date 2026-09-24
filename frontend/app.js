@@ -1041,11 +1041,20 @@ class MahjongApp {
     }
   }
 
+  /**
+   * 新しい対局の起家(最初の親)にする Seat。ローカル対戦・CPU対戦は常に east
+   * (CPU対戦は人が座る家を変えて起家を選ぶ)。オンライン対戦はルーム作成時の設定で決める。
+   */
+  chooseStartingDealer() {
+    return "east";
+  }
+
   newGame() {
     const { wall } = E.buildWall();
     const revealed = E.revealNextDoraIndicator(wall);
-    // 配牌は親(東家)から順に配る。この対局の起家は常に east
-    const { wall: dealtWall, hands } = E.dealInitialHands(revealed, ["east", "south"]);
+    const dealer = this.chooseStartingDealer();
+    // 配牌は親(東家)から順に配る
+    const { wall: dealtWall, hands } = E.dealInitialHands(revealed, [dealer, E.otherSeat(dealer)]);
 
     this.state = {
       gameId: "local",
@@ -1057,8 +1066,8 @@ class MahjongApp {
       // 「局が変わった」ことの判定(持ち時間・トグルのリセット)にはこちらを使う。
       roundSerial: 1,
       riichiSticks: 0,
-      startingDealer: "east",
-      dealer: "east",
+      startingDealer: dealer,
+      dealer,
       kanCount: 0,
       fourKanAbortivePending: false,
       wall: dealtWall,
@@ -1066,7 +1075,7 @@ class MahjongApp {
         east: Object.assign({}, E.createInitialPlayerState("east", 45000), { hand: hands.east }),
         south: Object.assign({}, E.createInitialPlayerState("south", 45000), { hand: hands.south }),
       },
-      currentTurn: "east",
+      currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
       totalRounds: 8,
@@ -1089,7 +1098,7 @@ class MahjongApp {
     this._roundTogglesResetIndex = this.roundKey();
     this._timerRoundKey = null;
     this.clearResultTimers();
-    this.addLog(`新しい対局を開始しました(起家: ${this.seatLabel(this.state.dealer)}家)`);
+    this.addLog(`新しい対局を開始しました(起家: ${this.playerName(dealer)})`);
     this.publish();
   }
 
@@ -1969,7 +1978,10 @@ class MahjongApp {
   renderFinalStandings() {
     const wrap = document.createElement("div");
     wrap.className = "result-scores final-standings";
-    const seats = ["east", "south"].sort((a, b) => this.state.players[b].score - this.state.players[a].score);
+    const first = this.state.startingDealer || "east";
+    const seats = [first, first === "east" ? "south" : "east"].sort(
+      (a, b) => this.state.players[b].score - this.state.players[a].score
+    );
     seats.forEach((seat, i) => {
       const row = document.createElement("div");
       row.className = "result-score-row final-row" + (i === 0 ? " final-top" : "");
