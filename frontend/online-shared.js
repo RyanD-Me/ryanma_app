@@ -22,6 +22,15 @@
 
 const OnlineEngine = MahjongEngine;
 
+/** 時間の表示(例: 180000 → 「3分」、95000 → 「1分35秒」、20000 → 「20秒」) */
+function formatDuration(ms) {
+  const total = Math.ceil(ms / 1000);
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  if (m === 0) return `${sec}秒`;
+  return sec === 0 ? `${m}分` : `${m}分${sec}秒`;
+}
+
 class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
@@ -590,7 +599,14 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
   }
 
   spectatorBadgeText(count) {
-    return count > 0 ? `観戦中(${count}人)` : "観戦中";
+    const delay = this._delayLabel();
+    return count > 0 ? `観戦中${delay}(${count}人)` : `観戦中${delay}`;
+  }
+
+  /** 観戦の遅れの表示(例: 「・3分遅れ」)。遅れが無ければ空 */
+  _delayLabel() {
+    const ms = (this.roomController && this.roomController.delayMs) || 0;
+    return ms > 0 ? `・${formatDuration(ms)}遅れ` : "";
   }
 
   render() {
@@ -637,6 +653,30 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
     const p = document.createElement("p");
     p.textContent = this.connectionEndedMessage || "観戦の準備をしています…";
     wrap.appendChild(p);
+    // 観戦は3分遅れで届くため、対局開始から3分経つまでは表示が始まらない。残り時間を知らせる
+    const rc = this.roomController;
+    if (!this.connectionEndedMessage && rc && rc.delayMs > 0 && rc.startsAt) {
+      const hint = document.createElement("p");
+      hint.className = "lobby-peer-status";
+      const update = () => {
+        const rest = Math.max(0, rc.startsAt - Date.now());
+        const delay = formatDuration(rc.delayMs);
+        hint.textContent =
+          rest >= 1000
+            ? `観戦は${delay}遅れで表示されます。あと約${formatDuration(rest)}で表示が始まります。`
+            : `観戦は${delay}遅れで表示されます。まもなく表示が始まります。`;
+      };
+      update();
+      wrap.appendChild(hint);
+      clearInterval(this._waitCountdown);
+      this._waitCountdown = setInterval(() => {
+        if (this._destroyed || this.state || !hint.isConnected) {
+          clearInterval(this._waitCountdown);
+          return;
+        }
+        update();
+      }, 1000);
+    }
     if (this.onExit) wrap.appendChild(this.button("ロビーに戻る", () => this.exitGame()));
     this.root.appendChild(wrap);
   }

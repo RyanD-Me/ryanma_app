@@ -33,8 +33,10 @@ const { RoomRegistry } = require("./roomRegistry");
  *                                            マッチングとして扱わないための識別子。省略可)
  *   cancel-match              自動マッチングをやめる → match-cancelled
  *   list-games                観戦できる対局の一覧 → games {list: [{code, names, spectators, round}]}
- *   spectate {code}           観戦を始める → spectating {code, names, game, spectators}
- *                                           (以後、対局者の game {payload} がそのまま届く)
+ *   spectate {code}           観戦を始める → spectating {code, names, game, spectators, delayMs, startsInMs}
+ *                                           (観戦者向けの対局データは delayMs(3分)遅れで届く。game は
+ *                                            その時点で届いている最新のもので、まだ無ければ null。
+ *                                            startsInMs は最初の対局データが届くまでの残り時間)
  *                                           失敗時は spectate-failed {message}
  *   stop-spectate             観戦をやめる
  *   ping                      生存確認   → pong
@@ -117,7 +119,15 @@ function handleClientMessage(registry, conn, msg) {
     }
     try {
       const result = registry.spectate(code, conn);
-      conn.send({ type: "spectating", code, names: result.names, game: result.lastGame, spectators: result.spectators });
+      conn.send({
+        type: "spectating",
+        code,
+        names: result.names,
+        game: result.lastGame,
+        spectators: result.spectators,
+        delayMs: result.delayMs,
+        startsInMs: result.startsInMs,
+      });
     } catch (err) {
       conn.send({ type: "spectate-failed", message: err.message });
     }

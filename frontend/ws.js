@@ -1024,6 +1024,9 @@ class SpectatorController {
     if (!msg || typeof msg.type !== "string" || msg.type === "pong") return;
     if (msg.type === "spectating") {
       this.code = msg.code || this.code;
+      // 観戦はサーバー側で遅らせて届く(既定3分)。最初の対局データが届く予定の時刻を覚えておく
+      this.delayMs = typeof msg.delayMs === "number" ? msg.delayMs : 0;
+      this.startsAt = Date.now() + (typeof msg.startsInMs === "number" ? msg.startsInMs : 0);
       this.spectatorCount = typeof msg.spectators === "number" ? msg.spectators : this.spectatorCount;
       this.latest = { seats: { east: "peer", south: "peer" }, names: msg.names, game: msg.game || null };
       const wasReconnecting = this._disconnectedAt !== null;
@@ -1849,6 +1852,9 @@ const MahjongLobby = (function () {
       const serverUrl = loadLastServerUrl();
       const wrap = el("div", { className: "lobby room-options spectate-view" });
       wrap.appendChild(el("h2", { className: "room-options-title", textContent: "観戦" }));
+      wrap.appendChild(
+        el("p", { className: "spectate-status", textContent: "観戦は3分遅れで表示されます(局・点数も3分前のものです)。" })
+      );
 
       const listBox = el("div", { className: "spectate-list" });
       const status = el("p", { className: "spectate-status", textContent: "対局の一覧を読み込んでいます…" });

@@ -27,7 +27,11 @@ const { RoomRegistry, handleClientMessage } = require("./protocol");
 
 const PORT = process.env.PORT || 8080;
 
-const registry = new RoomRegistry();
+// 観戦の遅れ(ミリ秒)。既定は3分。動作確認のため、環境変数 SPECTATOR_DELAY_MS で短くできる
+const spectatorDelayMs = Number.isFinite(Number(process.env.SPECTATOR_DELAY_MS)) && process.env.SPECTATOR_DELAY_MS !== ""
+  ? Number(process.env.SPECTATOR_DELAY_MS)
+  : undefined;
+const registry = new RoomRegistry({ spectatorDelayMs });
 
 const httpServer = http.createServer((req, res) => {
   // ホスティング先のヘルスチェック用に、素のHTTPリクエストにも簡単に応答しておく。

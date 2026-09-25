@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { RoomRegistry, handleClientMessage: rawHandleClientMessage, PROTOCOL_VERSION } = require("./protocol");
+const { SPECTATOR_DELAY_MS } = require("./roomRegistry");
 
 /** 今のアプリと同じく、create/join/rejoin/match には通信方式の版(protocol)を付けて送る */
 function handleClientMessage(registry, conn, msg) {
@@ -12,12 +13,14 @@ function handleClientMessage(registry, conn, msg) {
   return rawHandleClientMessage(registry, conn, msg);
 }
 
-/** タイマーを手動で動かせる RoomRegistry(配牌の演出の待ちなどを進めるため) */
+/** タイマーを手動で動かせる RoomRegistry(配牌の演出の待ちなどを進めるため)。時刻も registry.clock で進める */
 function timerRegistry(extra = {}) {
   const timers = [];
+  const clock = { now: 1000000 };
   const registry = new RoomRegistry(
     Object.assign(
       {
+        now: () => clock.now,
         setTimer: (fn, ms) => {
           const t = { fn, ms, done: false };
           timers.push(t);
@@ -30,6 +33,17 @@ function timerRegistry(extra = {}) {
       extra
     )
   );
+  registry.clock = clock;
+  /** 待ち時間がちょうど ms のタイマーだけを動かし、時刻も ms 進める(観戦の遅れを進めるため) */
+  registry.runTimersEqual = (ms) => {
+    clock.now += ms;
+    for (const t of timers.slice()) {
+      if (!t.done && t.ms === ms) {
+        t.done = true;
+        t.fn();
+      }
+    }
+  };
   /** 待ち時間が ms 以下のタイマーを動かす */
   registry.runTimers = (ms) => {
     for (const t of timers.slice()) {
@@ -456,34 +470,58 @@ test("観戦: 一覧には開始済み・観戦許可の対局だけが局と点
   assert.equal(msg.list.length, 1);
   assert.equal(msg.list[0].code, code);
   assert.deepEqual(msg.list[0].names, { east: "たろう", south: "じろう" });
-  assert.deepEqual(msg.list[0].round, { roundWind: "east", roundNumber: 1, scores: { east: 45000, south: 45000 }, ended: false });
+  // 局・点数は観戦と同じく3分遅れ(開始から3分経つまでは「対局中」)
+  assert.equal(msg.list[0].round, null);
+  registry.runTimersEqual(SPECTATOR_DELAY_MS);
+  handleClientMessage(registry, viewer, { type: "list-games" });
+  assert.deepEqual(viewer.received.at(-1).list[0].round, { roundWind: "east", roundNumber: 1, scores: { east: 45000, south: 45000 }, ended: false });
   assert.equal(msg.list[0].spectators, 0);
   // 一覧に牌山・手牌などの対局データそのものは含めない
   assert.equal(msg.list[0].game, undefined);
 });
 
-test("観戦: 入室で最新の対局データが届き、以後の中継も届く。人数は全員に通知される", () => {
+test("観戦: 対局データは3分遅れで届く(3分より新しい局面は観戦者に一切届かない)。人数は全員に通知される", () => {
   const registry = timerRegistry();
   const { host, guest, code, session } = startedRoom(registry);
   const viewer = fakeConn("viewer");
+  registry.clock.now += 60000; // 対局開始から1分後に観戦を始める
   handleClientMessage(registry, viewer, { type: "spectate", code: code.toLowerCase() });
 
   const spectating = viewer.received.find((m) => m.type === "spectating");
   assert.ok(spectating);
-  // 観戦者には両者の手牌を見せる(牌山は伏せる)
-  assert.ok(spectating.game.state.players.east.hand.every((t) => t.kind !== null));
-  assert.ok(spectating.game.state.players.south.hand.every((t) => t.kind !== null));
-  assert.ok(spectating.game.state.wall.liveWall.every((t) => t.kind === null));
+  // まだ3分経っていないので対局データは無く、あと約2分で届くことを知らせる
+  assert.equal(spectating.game, null);
+  assert.equal(spectating.delayMs, SPECTATOR_DELAY_MS);
+  assert.equal(spectating.startsInMs, SPECTATOR_DELAY_MS - 60000);
   assert.equal(spectating.spectators, 1);
   assert.deepEqual(host.received.at(-1), { type: "spectators", count: 1 });
   assert.deepEqual(guest.received.at(-1), { type: "spectators", count: 1 });
 
+  // 対局者が打牌しても、観戦者にはすぐには届かない
   const turn = session.state.currentTurn;
   const conn = turn === "east" ? host : guest;
+  const versionAtStart = session.version;
   handleClientMessage(registry, conn, { type: "action", action: { type: "discard", tileId: session.state.players[turn].drawnTile.id } });
-  assert.equal(viewer.received.at(-1).type, "game");
-  assert.equal(viewer.received.at(-1).payload.version, session.version);
   assert.equal(host.received.at(-1).type, "game");
+  assert.ok(!viewer.received.some((m) => m.type === "game"));
+
+  // 3分経つと、その時点の局面から順に届く(観戦者には両者の手牌を見せ、牌山は伏せる)
+  registry.runTimersEqual(SPECTATOR_DELAY_MS);
+  const games = viewer.received.filter((m) => m.type === "game").map((m) => m.payload);
+  assert.ok(games.length >= 2);
+  assert.ok(games[0].version <= versionAtStart);
+  assert.equal(games.at(-1).version, session.version);
+  const g = games.at(-1);
+  assert.ok(g.state.players.east.hand.every((t) => t.kind !== null));
+  assert.ok(g.state.players.south.hand.every((t) => t.kind !== null));
+  assert.ok(g.state.wall.liveWall.every((t) => t.kind === null));
+
+  // 後から来た観戦者には、遅らせた後の最新の局面が入室時に届く
+  const late = fakeConn("late");
+  handleClientMessage(registry, late, { type: "spectate", code });
+  const lateMsg = late.received.find((m) => m.type === "spectating");
+  assert.equal(lateMsg.game.version, session.version);
+  assert.equal(lateMsg.startsInMs, 0);
 });
 
 test("観戦: 観戦者からの game・action は受け付けない・観戦中は参加できない", () => {
@@ -526,6 +564,12 @@ test("観戦: 観戦者の切断・観戦終了で人数が減り、対局者の
   registry.handleDisconnect(v1);
   assert.deepEqual(host.received.at(-1), { type: "spectators", count: 1 });
   handleClientMessage(registry, guest, { type: "leave" });
+  // 対局者には退室がすぐ伝わるが、観戦者には遅らせている分を配り終えてから終了を知らせる
+  assert.equal(host.received.at(-1).type, "peer-left");
+  assert.notEqual(v2.received.at(-1).type, "spectate-ended");
+  assert.equal(registry.spectatingCode(v2), code);
+  registry.runTimersEqual(SPECTATOR_DELAY_MS);
+  assert.ok(v2.received.some((m) => m.type === "game"));
   assert.equal(v2.received.at(-1).type, "spectate-ended");
   assert.equal(registry.spectatingCode(v2), null);
 });
