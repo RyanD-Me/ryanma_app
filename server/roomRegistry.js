@@ -8,27 +8,26 @@
  * 差し替えられるようにするための分離。実際の接続は server.js が `ws` パッケージで受け、
  * ここが要求する { send(obj), close?() } という最小限の形(conn)に包んでから渡す。
  *
- * サーバーは麻雀のルールを一切知らない、ただの「2人の間でメッセージを中継するだけ」の
- * 相乗り役。実際のゲーム進行ロジック・状態はすべてクライアント側(online-shared.js の
- * OnlineMahjongApp)が持っており、そこから送られてきた `game` ペイロードをそのまま
- * もう一方へ転送するだけで良い。
+ * 対局の進行はサーバーが持つ(gameSession.js)。両者が着席したらサーバーが牌山を作って対局を始め、
+ * クライアントからは操作(`action`)だけを受け取り、合法なものだけを反映する。各座席・観戦者には、
+ * それぞれが見てよい情報だけにした対局データ(`game`)を配る(相手の手牌・牌山は伏せ牌)。
  *
  * ---- 再接続 ----
  * 着席したプレイヤーには座席ごとの秘密のトークン(rejoin token)を発行する。
  * 接続が切れても座席とトークンはすぐには消さず、猶予時間(既定5分)の間は予約したままにする。
  * その間に同じトークンで `rejoin` すれば同じ座席に戻れる。猶予時間を過ぎても戻らなければ、
  * 残っている相手に peer-left を通知してルームを破棄する。
- * また、中継した最新の `game` ペイロードをルームごとに保持しておき、再接続してきた側に
- * そのまま渡す(切断中に相手が進めた分も含めて追いつけるようにするため)。
+ * 再接続してきた側には、その座席向けの最新の対局データを渡す(切断中に相手が進めた分も含めて追いつける)。
  *
  * ---- 観戦 ----
  * 観戦を許可したルーム(ルーム作成時に選択。自動マッチングの対局は常に許可)は、対局が
- * 始まっていれば一覧に載り、ルームコードでも観戦できる。観戦者には入室時に保持している
- * 最新の `game` を渡し、以後は対局者どうしの中継と同じ `game` をそのまま配る(観戦者からの
- * 送信は一切中継しない)。観戦者数が変わるたびに、対局者と観戦者の全員へ人数を知らせる。
+ * 始まっていれば一覧に載り、ルームコードでも観戦できる。観戦者には両者の手牌を見せた対局データを
+ * 配る(牌山は伏せる。観戦者からの操作は受け付けない)。観戦者数が変わるたびに、対局者と観戦者の
+ * 全員へ人数を知らせる。
  */
 
 const crypto = require("crypto");
+const { GameSession } = require("./gameSession");
 
 // 紛らわしい文字 (0/O, 1/I/L) を除いた英数字。声に出して伝えても書き取りやすいように。
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -54,26 +53,6 @@ function otherSeat(seat) {
   return seat === "east" ? "south" : "east";
 }
 
-/**
- * 観戦一覧用に、中継中の game ペイロードから局と点数だけを抜き出す。
- * 形が想定と違う(古いクライアント等)場合は null を返し、一覧では「対局中」とだけ表示する。
- */
-function summarizeGame(game) {
-  try {
-    const s = game && game.state;
-    if (!s || !s.players) return null;
-    const score = (seat) => (s.players[seat] && typeof s.players[seat].score === "number" ? s.players[seat].score : null);
-    return {
-      roundWind: typeof s.roundWind === "string" ? s.roundWind : null,
-      roundNumber: typeof s.roundNumber === "number" ? s.roundNumber : null,
-      scores: { east: score("east"), south: score("south") },
-      ended: s.phase === "game_end",
-    };
-  } catch (e) {
-    return null;
-  }
-}
-
 function safeSend(conn, obj) {
   if (!conn) return;
   try {
@@ -92,7 +71,14 @@ class RoomRegistry {
   constructor(options = {}) {
     this.random = options.random || Math.random;
     this.graceMs = options.graceMs != null ? options.graceMs : DEFAULT_RECONNECT_GRACE_MS;
-    this.setTimer = options.setTimer || ((fn, ms) => setTimeout(fn, ms));
+    // 実際のタイマーは unref する(サーバーの待ち受けが続いている間は普通に動く。テストでは終了を妨げない)
+    this.setTimer =
+      options.setTimer ||
+      ((fn, ms) => {
+        const t = setTimeout(fn, ms);
+        if (t && typeof t.unref === "function") t.unref();
+        return t;
+      });
     this.clearTimer = options.clearTimer || ((t) => clearTimeout(t));
     /**
      * code -> {
@@ -100,7 +86,8 @@ class RoomRegistry {
      *   conns:  {east, south}  いま接続中の conn(切断中は null)
      *   tokens: {east, south}  座席の予約トークン(未着席は null)
      *   names:  {east, south}
-     *   lastGame: 最後に中継した game ペイロード(未開始なら null)
+     *   session: 対局(GameSession。両者が揃うまでは null)
+     *   settings: {timeControl, dealerChoice} ルーム作成時の設定(起家は east 席=作成者から見た決め方)
      *   graceTimers: {east, south} 切断中の座席の猶予タイマー
      *   allowSpectate: 観戦を許可するか
      *   spectators: Set<conn> 観戦中の接続
@@ -156,7 +143,8 @@ class RoomRegistry {
     }
     const newcomer = { conn, name: name || null, clientId: clientId || null };
     const [eastP, southP] = this.random() < 0.5 ? [waiting, newcomer] : [newcomer, waiting];
-    const { code, token: eastToken } = this.createRoom(eastP.conn, eastP.name);
+    // 自動マッチングは東西をランダムに決め、east 席が起家になる(=起家もランダム)。持ち時間は既定
+    const { code, token: eastToken } = this.createRoom(eastP.conn, eastP.name, { dealerChoice: "self" });
     const { seat, token: southToken } = this.joinRoom(code, southP.conn, southP.name);
     return {
       code,
@@ -176,7 +164,8 @@ class RoomRegistry {
 
   /**
    * 新しいルームを作成し、conn を east 家として着席させる。
-   * @param {{allowSpectate?: boolean}} [options] 観戦を許可するか(省略時は許可)
+   * @param {{allowSpectate?: boolean, timeControl?: object|null, dealerChoice?: string}} [options]
+   *   観戦を許可するか(省略時は許可)・持ち時間・起家の決め方(対局を始める時に使う)
    * @returns {{code: string, token: string}} 発行されたルームコードと再接続用トークン
    */
   createRoom(conn, name, options = {}) {
@@ -190,7 +179,8 @@ class RoomRegistry {
       conns: { east: conn, south: null },
       tokens: { east: token, south: null },
       names: { east: name || null, south: null },
-      lastGame: null,
+      session: null,
+      settings: { timeControl: options.timeControl, dealerChoice: options.dealerChoice },
       graceTimers: { east: null, south: null },
       createdAt: Date.now(),
       allowSpectate: options.allowSpectate !== false,
@@ -221,6 +211,59 @@ class RoomRegistry {
     room.names[openSeat] = name || null;
     this.connInfo.set(conn, { code, seat: openSeat });
     return { seat: openSeat, token };
+  }
+
+  /**
+   * 両者が着席したルームで、まだ対局が始まっていなければ始めて、全員に最初の対局データを配る。
+   * (join・自動マッチングの成立直後に、ready を送った後で呼ぶ)
+   */
+  startGameIfReady(code) {
+    const room = this.rooms.get(code);
+    if (!room || room.session || !room.tokens.east || !room.tokens.south) return;
+    room.session = new GameSession({
+      timeControl: room.settings.timeControl,
+      dealerChoice: room.settings.dealerChoice,
+      random: this.random,
+      setTimer: this.setTimer,
+      clearTimer: this.clearTimer,
+      onUpdate: () => this._broadcastGame(code),
+      gameId: code,
+    });
+    room.session.start();
+    this._broadcastGame(code);
+  }
+
+  /** そのルームの対局データを、各座席(その座席向け)と観戦者(観戦者向け)に配る */
+  _broadcastGame(code) {
+    const room = this.rooms.get(code);
+    if (!room || !room.session) return;
+    for (const s of SEATS) safeSend(room.conns[s], { type: "game", payload: room.session.viewFor(s) });
+    if (room.spectators.size > 0) {
+      const view = room.session.viewFor(null);
+      for (const sp of room.spectators) safeSend(sp, { type: "game", payload: view });
+    }
+  }
+
+  /**
+   * 対局者の操作を反映する。合法でなければ反映せず、その理由と今の対局データを本人にだけ返す。
+   * @returns {boolean} 反映したか
+   */
+  applyAction(conn, action) {
+    const info = this.infoFor(conn);
+    const room = info && this.rooms.get(info.code);
+    if (!room || !room.session) {
+      safeSend(conn, { type: "action-rejected", message: "対局が始まっていません。" });
+      return false;
+    }
+    try {
+      room.session.apply(info.seat, action);
+    } catch (err) {
+      safeSend(conn, { type: "action-rejected", message: (err && err.message) || "その操作はできません。" });
+      safeSend(conn, { type: "game", payload: room.session.viewFor(info.seat) });
+      return false;
+    }
+    this._broadcastGame(info.code);
+    return true;
   }
 
   /**
@@ -263,7 +306,7 @@ class RoomRegistry {
     this.connInfo.set(conn, { code, seat });
     const peer = room.conns[otherSeat(seat)];
     safeSend(peer, { type: "peer-online" });
-    return { seat, names: this.namesFor(code), lastGame: room.lastGame, peerConnected: !!peer };
+    return { seat, names: this.namesFor(code), lastGame: room.session ? room.session.viewFor(seat) : null, peerConnected: !!peer };
   }
 
   /**
@@ -305,28 +348,10 @@ class RoomRegistry {
     return !!(room && room.conns.east && room.conns.south);
   }
 
-  /** そのルームで最後に中継した game ペイロード(再接続時の追いつき用)。 */
-  lastGameFor(code) {
+  /** そのルームの、seat 向け(null なら観戦者向け)の最新の対局データ(未開始なら null)。 */
+  lastGameFor(code, seat = null) {
     const room = this.rooms.get(code);
-    return room ? room.lastGame : null;
-  }
-
-  /**
-   * ゲーム進行データを、同じルームのもう一方の座席へ中継する。
-   * 相手が切断中でも最新の状態としてルームに保持しておき、相手の再接続時に渡す。
-   * @returns {boolean} 相手に実際に届けたか
-   */
-  relayGame(conn, payload) {
-    const info = this.infoFor(conn);
-    if (!info) return false;
-    const room = this.rooms.get(info.code);
-    if (!room) return false;
-    room.lastGame = payload;
-    for (const sp of room.spectators) safeSend(sp, { type: "game", payload });
-    const peer = room.conns[otherSeat(info.seat)];
-    if (!peer) return false;
-    peer.send({ type: "game", payload });
-    return true;
+    return room && room.session ? room.session.viewFor(seat) : null;
   }
 
   /**
@@ -392,6 +417,7 @@ class RoomRegistry {
       safeSend(sp, { type: "spectate-ended", message: "対局が終了しました。" });
     }
     room.spectators.clear();
+    if (room.session) room.session.destroy();
     for (const s of SEATS) {
       if (room.graceTimers[s]) this.clearTimer(room.graceTimers[s]);
       if (room.conns[s]) this.connInfo.delete(room.conns[s]);
@@ -408,12 +434,12 @@ class RoomRegistry {
 
   /** そのルームが今観戦できるか(観戦許可・両者着席済み・対局開始済み)。 */
   _isSpectatable(room) {
-    return !!(room && room.allowSpectate && room.tokens.east && room.tokens.south && room.lastGame);
+    return !!(room && room.allowSpectate && room.tokens.east && room.tokens.south && room.session);
   }
 
   /**
    * 観戦できる対局の一覧。一覧表示に必要な最小限の情報だけを返す(牌山・手牌は含めない)。
-   * 局・点数は中継している game ペイロードから読むだけで、ルールの判断はしない。
+   * 局・点数はサーバーが持つ対局から読む。
    * @returns {Array<{code: string, names: object, spectators: number, round: object|null}>}
    */
   listSpectatableGames() {
@@ -426,7 +452,7 @@ class RoomRegistry {
         code: room.code,
         names: this.namesFor(room.code),
         spectators: room.spectators.size,
-        round: summarizeGame(room.lastGame),
+        round: room.session.summary(),
       });
     }
     list.sort((a, b) => this.rooms.get(a.code).createdAt - this.rooms.get(b.code).createdAt);
@@ -449,7 +475,7 @@ class RoomRegistry {
     room.spectators.add(conn);
     this.spectatorInfo.set(conn, code);
     this._broadcastSpectatorCount(room);
-    return { names: this.namesFor(code), lastGame: room.lastGame, spectators: room.spectators.size };
+    return { names: this.namesFor(code), lastGame: room.session.viewFor(null), spectators: room.spectators.size };
   }
 
   /** 観戦をやめる(観戦していなければ何もしない)。 */

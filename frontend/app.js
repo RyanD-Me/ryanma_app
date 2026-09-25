@@ -888,6 +888,7 @@ const HONOR_SORT_ORDER = { east: 0, south: 1, west: 2, north: 3, white: 4, green
 
 /** 自動理牌の並び順: 萬子1-9 → 筒子1・9 → 索子1・9 → 字牌(東南西北白發中) */
 function tileSortKey(kind) {
+  if (!kind) return 999; // 伏せ牌(中身を知らされていない牌)は並べ替えない
   if (kind.kind === "number") {
     return SUIT_SORT_ORDER[kind.suit] * 100 + kind.rank;
   }
@@ -905,6 +906,8 @@ function makeTileEl(
   tile,
   { faceDown = false, onClick = null, highlight = false, armed = false, onArm = null, dimmed = false } = {}
 ) {
+  // 中身の無い牌(サーバーが伏せて送ってきた相手の手牌・牌山など)は常に裏向きで描く
+  if (!tile.kind) faceDown = true;
   const el = document.createElement("button");
   el.type = "button";
   el.className = faceDown
@@ -3126,9 +3129,9 @@ class MahjongApp {
       // 対象の捨て牌は河の中で縁が光っているため、どの牌に対する選択肢かの説明は置かない。
       const discard = this.state.lastDiscard;
       const seat = E.otherSeat(discard.from);
-      const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
-
+      // 選択肢は自分が操作できる家の分だけ調べる(オンライン対戦では相手の手牌は伏せ牌で届くため)
       if (this.canAct("callWindow", seat)) {
+        const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
         if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
         if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
         if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));

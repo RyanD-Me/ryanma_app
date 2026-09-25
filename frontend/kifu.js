@@ -20,8 +20,6 @@ const KIFU_VERSION = 1;
 const KIFU_MAX_RECORDS = 50;
 /** 状態が変わってから端末内へ保存するまでの待ち時間(局の終わり・対局終了はすぐ保存する) */
 const KIFU_SAVE_DELAY_MS = 1500;
-/** オンライン対戦の牌譜を「対局中」とみなす時間。対局中は再生できないようにする(相手の手牌が見えるため) */
-const KIFU_ONLINE_LOCK_MS = 15 * 60 * 1000;
 /** 同じルームの対局をページの読み込み直し後も同じ牌譜に続けて記録する猶予 */
 const KIFU_RESUME_WINDOW_MS = 30 * 60 * 1000;
 
@@ -327,6 +325,7 @@ class KifuRecorder {
           rows.find(
             (r) =>
               r.mode === this.mode &&
+              !r.imported &&
               r.roomCode === this.roomCode &&
               !r.finished &&
               Date.now() - (r.updatedAt || 0) < KIFU_RESUME_WINDOW_MS &&
@@ -495,10 +494,6 @@ function kifuParseFile(text) {
   return data;
 }
 
-/** オンライン対戦の対局中の牌譜か(相手の手牌が見えてしまうため、対局中は再生させない) */
-function kifuIsLocked(record) {
-  return record.mode === "online" && !record.finished && Date.now() - (record.updatedAt || 0) < KIFU_ONLINE_LOCK_MS;
-}
 
 // ---------------- 再生 ----------------
 

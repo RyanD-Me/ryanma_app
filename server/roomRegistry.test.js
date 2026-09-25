@@ -54,26 +54,38 @@ test("joinRoom: 満席のルームはエラー", () => {
   assert.throws(() => registry.joinRoom(code, guest2), /満席/);
 });
 
-test("relayGame: 送信した側ではなく、もう一方の座席にだけ届く", () => {
+test("startGameIfReady: 両者が揃うとサーバーが対局を始め、各座席に自分向けの対局データを配る", () => {
   const registry = new RoomRegistry();
   const host = fakeConn("host");
   const guest = fakeConn("guest");
-  const { code } = registry.createRoom(host);
+  const { code } = registry.createRoom(host, "たろう", { dealerChoice: "opponent" });
+  registry.startGameIfReady(code); // 相手がまだ居ない → 始まらない
+  assert.equal(registry.rooms.get(code).session, null);
   registry.joinRoom(code, guest);
-
-  const ok = registry.relayGame(host, { hello: "world" });
-  assert.equal(ok, true);
-  assert.equal(guest.received.length, 1);
-  assert.deepEqual(guest.received[0], { type: "game", payload: { hello: "world" } });
-  assert.equal(host.received.length, 0);
+  registry.startGameIfReady(code);
+  const session = registry.rooms.get(code).session;
+  assert.ok(session);
+  assert.equal(session.state.startingDealer, "south");
+  const hv = host.received.at(-1);
+  const gv = guest.received.at(-1);
+  assert.equal(hv.type, "game");
+  assert.ok(hv.payload.state.players.south.hand.every((t) => t.kind === null));
+  assert.ok(gv.payload.state.players.east.hand.every((t) => t.kind === null));
+  registry.startGameIfReady(code); // 2回目は何もしない
+  assert.equal(registry.rooms.get(code).session, session);
+  registry.leaveRoom(host);
+  assert.equal(session.destroyed, true);
 });
 
-test("relayGame: 相手がまだ居ない場合は何も起きない(falseを返す)", () => {
+test("applyAction: ルームに属していない・対局前の操作は action-rejected", () => {
   const registry = new RoomRegistry();
+  const stray = fakeConn("stray");
+  assert.equal(registry.applyAction(stray, { type: "pass" }), false);
+  assert.equal(stray.received.at(-1).type, "action-rejected");
   const host = fakeConn("host");
   registry.createRoom(host);
-  const ok = registry.relayGame(host, { x: 1 });
-  assert.equal(ok, false);
+  assert.equal(registry.applyAction(host, { type: "pass" }), false);
+  assert.equal(host.received.at(-1).type, "action-rejected");
 });
 
 test("handleDisconnect: 部屋に属していないconnに対しては何もしない(例外を投げない)", () => {
@@ -96,9 +108,10 @@ test("2つのルームが互いに影響しないこと", () => {
   registry.joinRoom(codeA, guestA);
   registry.joinRoom(codeB, guestB);
 
-  registry.relayGame(hostA, { room: "A" });
-  assert.deepEqual(guestA.received[0], { type: "game", payload: { room: "A" } });
+  registry.startGameIfReady(codeA);
+  assert.equal(guestA.received.at(-1).type, "game");
   assert.equal(guestB.received.length, 0);
+  assert.equal(registry.rooms.get(codeB).session, null);
 });
 
 // ---------------- 再接続 ----------------
@@ -156,22 +169,26 @@ test("handleDisconnect: すぐにはルームを破棄せず、相手に peer-of
 test("rejoinRoom: 正しいトークンなら同じ座席に戻り、最新の対局データを受け取れる。相手には peer-online", () => {
   const { registry, timers } = manualTimerRegistry();
   const { host, guest, code, guestToken } = setupFullRoom(registry);
-  registry.relayGame(host, { turn: 1 });
   registry.handleDisconnect(guest);
-  // 相手の切断中に進んだ分もサーバーに保持される
-  assert.equal(registry.relayGame(host, { turn: 2 }), false);
+  assert.equal(registry.rejoinRoom(code, guestToken, fakeConn("g-before")).lastGame, null); // 対局前は null
+  registry.handleDisconnect(registry.rooms.get(code).conns.south);
+  registry.startGameIfReady(code); // 相手の切断中でも対局はサーバーにある
+  const version = registry.rooms.get(code).session.version;
 
   const guest2 = fakeConn("guest2");
   const result = registry.rejoinRoom(code, guestToken, guest2);
   assert.equal(result.seat, "south");
-  assert.deepEqual(result.lastGame, { turn: 2 });
+  // 最新の、自分(south)向けの対局データ
+  assert.equal(result.lastGame.version, version);
+  assert.ok(result.lastGame.state.players.east.hand.every((t) => t.kind === null));
   assert.deepEqual(result.names, { east: "たろう", south: "じろう" });
   assert.equal(result.peerConnected, true);
   assert.deepEqual(host.received.at(-1), { type: "peer-online" });
-  assert.equal(timers.size, 0, "猶予タイマーは解除される");
-  // 戻った後は通常どおり中継される
-  registry.relayGame(host, { turn: 3 });
-  assert.deepEqual(guest2.received.at(-1), { type: "game", payload: { turn: 3 } });
+  assert.equal(registry.rooms.get(code).graceTimers.south, null, "猶予タイマーは解除される");
+  // 戻った後は、この接続に対局データが配られる
+  registry.applyAction(host, { type: "pass" }); // east の手番でなくても、配り直しは本人にだけ
+  registry._broadcastGame(code);
+  assert.equal(guest2.received.at(-1).type, "game");
 });
 
 test("rejoinRoom: トークン違い・存在しないルームはエラー", () => {

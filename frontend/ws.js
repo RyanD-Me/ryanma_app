@@ -20,6 +20,8 @@
 
 /** 再接続のために保存しておく、直近のオンライン対局の情報(ページを再読み込みしても戻れるように) */
 const WS_SESSION_STORAGE_KEY = "mahjong_ws_session";
+/** サーバーとの通信方式の版(2: 対局をサーバーが進める方式)。server/protocol.js の PROTOCOL_VERSION と合わせる */
+const WS_PROTOCOL_VERSION = 2;
 /** サーバー側で座席が予約される時間(server/roomRegistry.js の DEFAULT_RECONNECT_GRACE_MS)と揃える */
 const WS_RECONNECT_GRACE_MS = 5 * 60 * 1000;
 /** 再接続を試みる間隔(回数ごとに伸ばし、最大 WS_RECONNECT_MAX_DELAY_MS) */
@@ -249,12 +251,18 @@ function getOrCreateClientId() {
  *   onError(err)           その他の通信エラー
  */
 class WsRoomController {
-  /** @param {{serverUrl: string, name?: string|null, allowSpectate?: boolean}} opts */
-  constructor({ serverUrl, name, allowSpectate }) {
+  /**
+   * @param {{serverUrl: string, name?: string|null, allowSpectate?: boolean, timeControl?: object|null,
+   *          dealerChoice?: string}} opts  allowSpectate・timeControl・dealerChoice はルーム作成時だけ使う
+   */
+  constructor({ serverUrl, name, allowSpectate, timeControl, dealerChoice }) {
     this.serverUrl = serverUrl;
     this.myName = name || null;
     /** ルーム作成時に、観戦を許可するか(参加・自動マッチングでは使わない) */
     this.allowSpectate = allowSpectate !== false;
+    /** ルーム作成時の持ち時間・起家の決め方(対局はサーバーがこの設定で進める) */
+    this.timeControl = timeControl === undefined ? DEFAULT_TIME_CONTROL : timeControl;
+    this.dealerChoice = dealerChoice || "self";
     /** この対局を観戦している人数(サーバーから通知される) */
     this.spectatorCount = 0;
     /** サーバーに接続中の人数(この接続自身も含む。サーバーから通知される)。未受信は null */
@@ -263,7 +271,6 @@ class WsRoomController {
     this.code = null;
     this.mySeat = null;
     this.token = null;
-    this.hostSeat = "east";
     this.latest = null;
     this.ws = null;
     this.status = "connecting";
@@ -286,6 +293,8 @@ class WsRoomController {
     this.onFatal = null;
     this.onError = null;
     this.onMatchWaiting = null;
+    /** 送った操作をサーバーが受け付けなかった */
+    this.onActionRejected = null;
 
     /** OnlineMahjongApp が使う room capability 相当のダックタイピング(相手の在席表示用) */
     this.room = {
@@ -419,7 +428,7 @@ class WsRoomController {
     if (this._stopped || this._ended) return;
     this.reconnectAttempts++;
     if (this.onConnectionChange) this.onConnectionChange();
-    this._openSocket({ type: "rejoin", code: this.code, token: this.token });
+    this._openSocket({ type: "rejoin", protocol: WS_PROTOCOL_VERSION, code: this.code, token: this.token });
   }
 
   /** 回線の復帰やアプリへの復帰を検知したら、待たずにすぐ再接続する */
@@ -514,6 +523,25 @@ class WsRoomController {
       return;
     }
     if (msg.type === "match-cancelled") return;
+
+    // 対局をサーバーが進める方式(protocol 2)に対応していない古いサーバーとは対戦しない
+    if (["created", "joined", "matched", "rejoined"].includes(msg.type) && !(msg.protocol >= WS_PROTOCOL_VERSION)) {
+      const err = new Error("サーバーが古いバージョンのため対戦できません(サーバーの更新が必要です)。");
+      if (this._pending) {
+        this._rejectPending(err);
+        this._stopped = true;
+        this._dropSocket();
+        this._setStatus("closed");
+      } else {
+        this._giveUp(err.message);
+      }
+      return;
+    }
+
+    if (msg.type === "action-rejected") {
+      if (this.onActionRejected) this.onActionRejected(msg.message);
+      return;
+    }
 
     if (msg.type === "created" || msg.type === "joined" || msg.type === "matched") {
       this.code = msg.code;
@@ -647,12 +675,19 @@ class WsRoomController {
 
   /** ルームを作成する(自分が east 家)。 */
   createRoom() {
-    return this._request({ type: "create", name: this.myName, allowSpectate: this.allowSpectate });
+    return this._request({
+      type: "create",
+      protocol: WS_PROTOCOL_VERSION,
+      name: this.myName,
+      allowSpectate: this.allowSpectate,
+      timeControl: this.timeControl,
+      dealerChoice: this.dealerChoice,
+    });
   }
 
   /** 既存のルームに参加する。 */
   joinRoom(code) {
-    return this._request({ type: "join", code, name: this.myName });
+    return this._request({ type: "join", protocol: WS_PROTOCOL_VERSION, code, name: this.myName });
   }
 
   /**
@@ -660,7 +695,7 @@ class WsRoomController {
    * (created/joined と同じく)座席が決まった時点で解決する。
    */
   findMatch() {
-    return this._request({ type: "match", name: this.myName, clientId: getOrCreateClientId() });
+    return this._request({ type: "match", protocol: WS_PROTOCOL_VERSION, name: this.myName, clientId: getOrCreateClientId() });
   }
 
   /** 自動マッチングの相手待ちをやめる(サーバーの待ち行列から外れて接続を閉じる) */
@@ -682,17 +717,18 @@ class WsRoomController {
     this.token = session.token;
     this.mySeat = session.seat || null;
     this._disconnectedAt = Date.now();
-    return this._request({ type: "rejoin", code: session.code, token: session.token });
+    return this._request({ type: "rejoin", protocol: WS_PROTOCOL_VERSION, code: session.code, token: session.token });
   }
 
-  async publishGame(game) {
-    this.latest = Object.assign({}, this.latest, { game });
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.status !== "connected") {
-      const err = new Error("サーバーとの接続が切れています。");
-      err.code = "unavailable";
-      throw err;
+  /** 操作(打牌・鳴き・和了・確認など)をサーバーへ送る。接続が切れていて送れなければ false */
+  sendAction(action) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.status !== "connected") return false;
+    try {
+      this.ws.send(JSON.stringify({ type: "action", action }));
+      return true;
+    } catch (e) {
+      return false;
     }
-    this.ws.send(JSON.stringify({ type: "game", payload: game }));
   }
 
   _sendLeaveViaFreshSocket() {
@@ -1024,7 +1060,10 @@ class SpectatorController {
   }
 
   /** 観戦者は対局データを送らない(呼ばれても何もしない) */
-  async publishGame() {}
+  /** 観戦者は操作しない */
+  sendAction() {
+    return false;
+  }
 
   /** 観戦をやめる */
   stop() {
@@ -1953,9 +1992,9 @@ const MahjongLobby = (function () {
             errorP.textContent = err.message;
             return;
           }
+          // 読み込んだ牌譜は一覧の先頭に出す(対局の記録の続きとしては使わない: kifu.js の _begin)
           record.imported = true;
-          // 再生中の対局扱い(ロック)にならないよう、読み込んだ牌譜は対局中とみなさない
-          if (!record.finished) record.updatedAt = 0;
+          record.updatedAt = Date.now();
           KifuStore.put(record)
             .catch(() => {})
             .then(() => startReplay(record));
@@ -1988,10 +2027,7 @@ const MahjongLobby = (function () {
               textContent: `${names.east || "Player1"} vs ${names.south || "Player2"}`,
             })
           );
-          const locked = kifuIsLocked(r);
-          const state = locked
-            ? "対局中"
-            : r.finished
+          const state = r.finished
               ? sum && sum.endReason === "bust"
                 ? "トビ終了"
                 : "終局"
@@ -2005,11 +2041,8 @@ const MahjongLobby = (function () {
           item.appendChild(info);
           const btns = el("div", { className: "kifu-item-btns" });
           const playBtn = el("button", { type: "button", className: "btn btn-primary", textContent: "再生" });
-          playBtn.disabled = locked;
-          if (locked) playBtn.title = "対局中の牌譜は、対局が終わってから再生できます";
           playBtn.addEventListener("click", () => startReplay(r));
           const saveBtn = el("button", { type: "button", className: "btn", textContent: "ファイルに保存" });
-          saveBtn.disabled = locked;
           saveBtn.addEventListener("click", () => kifuExportFile(r));
           const delBtn = el("button", { type: "button", className: "btn", textContent: "削除" });
           delBtn.addEventListener("click", () => {
@@ -2080,7 +2113,13 @@ const MahjongLobby = (function () {
       root.innerHTML = "";
       root.appendChild(el("p", { textContent: "サーバーに接続しています…" }));
 
-      const controller = new WsRoomController({ serverUrl, name: name || null, allowSpectate: roomOptions.allowSpectate });
+      const controller = new WsRoomController({
+        serverUrl,
+        name: name || null,
+        allowSpectate: roomOptions.allowSpectate,
+        timeControl,
+        dealerChoice: roomOptions.dealerChoice,
+      });
       // 自動マッチングの相手待ちが長時間(既定5分)続いた場合に諦めてロビーへ戻るためのタイマー。
       // 相手が見つかった・キャンセルした・接続が切れた、いずれの場合も必ずクリアすること
       // (クリアし忘れると、対局が始まった後にこのタイマーが発火して controller.cancelMatch() が
@@ -2125,7 +2164,6 @@ const MahjongLobby = (function () {
         currentApp = new OnlineMahjongApp(root, {
           roomController: controller,
           mySeat: result.mySeat,
-          hostSeat: "east",
           onExit: showLobby,
           isMatch: mode === "match",
           // ルーム作成時に選んだ持ち時間(自動マッチング・参加時は既定値。参加側は
@@ -2163,7 +2201,6 @@ const MahjongLobby = (function () {
         currentApp = new OnlineMahjongApp(root, {
           roomController: controller,
           mySeat: result.mySeat,
-          hostSeat: "east",
           onExit: showLobby,
         });
       } catch (err) {

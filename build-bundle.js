@@ -55,7 +55,15 @@ out.push("    requireModule('scoring/index'),");
 out.push("    requireModule('game/index'),");
 out.push("    requireModule('ai/index')");
 out.push("  );");
-out.push("})(window);");
+const body = out.join("\n");
 
-fs.writeFileSync(path.join(__dirname, "frontend", "mahjong-engine.bundle.js"), out.join("\n"));
+fs.writeFileSync(path.join(__dirname, "frontend", "mahjong-engine.bundle.js"), body + "\n})(window);");
 console.log("bundle written:", path.join(__dirname, "frontend", "mahjong-engine.bundle.js"));
+
+// 中継サーバー用(Node の require で読み込む)。サーバーが対局を進めるために同じエンジンを使う。
+// server フォルダだけをデプロイしても動くよう、生成したファイルもリポジトリに含める(手編集しないこと)。
+fs.writeFileSync(
+  path.join(__dirname, "server", "mahjong-engine.js"),
+  '"use strict";\nconst __engineHost = {};\n' + body + "\n})(__engineHost);\nmodule.exports = __engineHost.MahjongEngine;\n"
+);
+console.log("server engine written:", path.join(__dirname, "server", "mahjong-engine.js"));
