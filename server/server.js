@@ -40,7 +40,16 @@ const httpServer = http.createServer((req, res) => {
   res.end(`二人麻雀オンライン対戦・中継サーバー稼働中(現在のルーム数: ${registry.roomCount()})\n`);
 });
 
-const wss = new WebSocketServer({ server: httpServer });
+/**
+ * 1メッセージの最大サイズ(バイト)。対局データ一式でも数十KB程度なので、これを超えるものは
+ * 改造したクライアント等からの異常なデータとして受け付けない(ws が接続を切る)。
+ */
+const MAX_MESSAGE_BYTES = 512 * 1024;
+/** 1接続が RATE_WINDOW_MS の間に送ってよいメッセージ数。超えたら接続を切る(大量送信でサーバーを止められないように) */
+const RATE_WINDOW_MS = 10000;
+const RATE_MAX_MESSAGES = 300;
+
+const wss = new WebSocketServer({ server: httpServer, maxPayload: MAX_MESSAGE_BYTES });
 
 /** WebSocket レベルの生存確認の間隔(ミリ秒)。この間に pong が返らなければ切断扱いにする。 */
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -73,7 +82,19 @@ wss.on("connection", (ws) => {
     ws.isAlive = true;
   });
 
+  let windowStart = Date.now();
+  let windowCount = 0;
   ws.on("message", (raw) => {
+    const now = Date.now();
+    if (now - windowStart > RATE_WINDOW_MS) {
+      windowStart = now;
+      windowCount = 0;
+    }
+    if (++windowCount > RATE_MAX_MESSAGES) {
+      conn.send({ type: "error", message: "送信が多すぎるため接続を切りました。" });
+      ws.terminate();
+      return;
+    }
     let msg;
     try {
       msg = JSON.parse(raw.toString());

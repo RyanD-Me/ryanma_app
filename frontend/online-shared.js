@@ -316,6 +316,14 @@ class OnlineMahjongApp extends MahjongApp {
       return;
     }
     const g = doc.game;
+    // 改造したクライアントから形の正しくないデータが届いた場合は使わない(画面を壊されないように)
+    if (!isValidGamePayload(g)) {
+      if (!this._invalidNoticeShown) {
+        this._invalidNoticeShown = true;
+        this.addLog("相手から正しくない対局データが届いたため、無視しました。");
+      }
+      return;
+    }
     const oldState = this.state;
     const newState = g.state;
 

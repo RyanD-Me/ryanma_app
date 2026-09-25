@@ -443,6 +443,21 @@ function kifuExportFile(record) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+/** 牌譜の全コマが、局面として正しい形か(手で書き換えたファイルを再生しないため) */
+function kifuFramesValid(record, frames) {
+  const tiles = record.tiles && typeof record.tiles === "object" ? record.tiles : {};
+  let list;
+  try {
+    list = frames || kifuExpandFrames(record);
+  } catch (e) {
+    return false;
+  }
+  return (
+    list.length > 0 &&
+    list.every((f) => f.enc && isValidGameState(kifuDecode(f.enc.s, tiles)) && isValidLastWin(kifuDecode(f.enc.w || null, tiles)))
+  );
+}
+
 /** 読み込んだファイルの中身を牌譜として検査する。問題があれば Error を投げる */
 function kifuParseFile(text) {
   let data;
@@ -456,6 +471,27 @@ function kifuParseFile(text) {
   }
   if (data.v > KIFU_VERSION) throw new Error("新しい形式の牌譜のため読み込めません。ページを更新してください。");
   if (data.frames.length === 0) throw new Error("この牌譜には記録がありません。");
+  if (!kifuFramesValid(data)) throw new Error("牌譜の中身が正しくありません(壊れているか、書き換えられています)。");
+  // 一覧に表示する項目も、文字列・数値以外が入っていないか確かめて整える
+  const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
+  data.names = { east: str(data.names && data.names.east, 20), south: str(data.names && data.names.south, 20) };
+  data.mode = ["cpu", "online", "spectate"].includes(data.mode) ? data.mode : "cpu";
+  data.id = str(data.id, 40) || kifuNewId();
+  data.roomCode = str(data.roomCode, 10);
+  data.startedAt = Number.isFinite(data.startedAt) ? data.startedAt : Date.now();
+  data.finished = !!data.finished;
+  data.partial = !!data.partial;
+  data.viewSeat = data.viewSeat === "south" ? "south" : "east";
+  const sum = data.summary;
+  data.summary =
+    sum && sum.scores && isValidScore(sum.scores.east) && isValidScore(sum.scores.south)
+      ? {
+          roundWind: VALID_WINDS.includes(sum.roundWind) ? sum.roundWind : "east",
+          roundNumber: sum.roundNumber === 2 ? 2 : 1,
+          scores: { east: sum.scores.east, south: sum.scores.south },
+          endReason: sum.endReason === "bust" || sum.endReason === "all_rounds_complete" ? sum.endReason : null,
+        }
+      : null;
   return data;
 }
 
@@ -475,6 +511,8 @@ class ReplayMahjongApp extends MahjongApp {
     super(root, { autoStart: false, onExit, timeControl: null });
     this.record = record;
     this.frames = kifuExpandFrames(record);
+    // 読み込んだファイルは手で書き換えられている可能性があるので、全コマの形を先に確かめる
+    if (!kifuFramesValid(record, this.frames)) throw new Error("牌譜の中身が正しくありません。");
     this.viewSeat = record.viewSeat === "south" ? "south" : "east";
     this.allowPeekToggle = false;
     this.index = 0;
