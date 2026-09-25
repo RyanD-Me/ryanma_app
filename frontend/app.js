@@ -1733,6 +1733,8 @@ class MahjongApp {
     this.scheduleAutoWin();
     this.syncResultTimer();
     this.playSoundsForChanges();
+    // 牌譜の記録(CPU対戦・オンライン対戦・観戦。状態が変わった時だけ1コマ増える)
+    if (this.kifuRecorder) this.kifuRecorder.capture(this);
     // 対局ログ(内部的には引き続き記録するが、画面表示は不要とのことなので非表示にする)
   }
 
@@ -3651,6 +3653,7 @@ class CpuMahjongApp extends MahjongApp {
     this._cpuTimer = null;
     this._cpuTaskKey = null;
     this._destroyed = false;
+    this.kifuRecorder = typeof KifuRecorder === "function" ? new KifuRecorder({ mode: "cpu" }) : null;
     if (options.autoStart !== false) {
       this.newGame();
     }
@@ -3713,6 +3716,7 @@ class CpuMahjongApp extends MahjongApp {
 
   destroy() {
     this._destroyed = true;
+    if (this.kifuRecorder) this.kifuRecorder.stop();
     this._clearCpuTimer();
     this.clearResultTimers();
     this.stopTurnTimer();

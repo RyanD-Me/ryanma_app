@@ -26,6 +26,7 @@ const replacements = [
   ["/*ENGINE_PLACEHOLDER*/", bundlePath],
   ["/*APP_PLACEHOLDER*/", path.join(frontendDir, "app.js")],
   ["/*ONLINE_SHARED_PLACEHOLDER*/", path.join(frontendDir, "online-shared.js")],
+  ["/*KIFU_PLACEHOLDER*/", path.join(frontendDir, "kifu.js")],
   ["/*WS_PLACEHOLDER*/", path.join(frontendDir, "ws.js")],
 ];
 
