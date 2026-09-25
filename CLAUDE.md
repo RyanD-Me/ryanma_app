@@ -34,7 +34,8 @@ frontend/
   styles.css          すべてのスタイル(スマホ縦/横のメディアクエリを含む)
   sounds/             効果音・BGM(ビルド時に data URL で埋め込まれる。ファイル名=音の名前)
   sounds_original/    BGM の元ファイル(埋め込まれない。音質を戻したいとき用)
-server/               オンライン対戦の中継サーバー(Node + ws)。ルールは一切持たない
+server/               オンライン対戦サーバー(Node + ws)。対局の進行・合法手の検査はサーバーが行う(gameSession.js)。
+                      mahjong-engine.js は npm run bundle で src/ から生成するサーバー用エンジン(手編集しない)
 build-bundle.js       dist/ のエンジンをブラウザ用の1ファイルに束ねる
 build-html-ws.js      shell-ws.html に CSS・エンジン・app/online-shared/kifu/ws・効果音を埋め込み frontend/index-ws.html を作る
 index.html            公開用(= frontend/index-ws.html のコピー。npm run release で作る)
@@ -94,12 +95,24 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   自動マッチングの待機中はマッチング用の接続に届く人数を使う(別接続を張ると自分が2人分数えられるため)。
 - 自動マッチングの待機が5分を超えたら「長時間マッチングしなかったためロビーに戻ります。」でロビーへ戻る。
 
-### オンライン対戦(`online-shared.js`、サーバーは薄い中継)
-- 状態(`state` + lastWin 等)を丸ごと相手に送る方式。**進行を行うのはその局面の権利を持つ側だけ**(`canAct`)。
-  牌山のシャッフルを伴う操作(次局・新規対局)はホスト(east)だけ。両家の合意が要るもの(結果画面の確認・再戦)は OR 合成。
-- 起家: ルーム作成時に 自分/相手/ランダム を選ぶ(`dealerChoice`、localStorage `mahjong_room_dealer`)。座席はそのまま
-  (作成者=east=ホスト)で、ホストが `chooseStartingDealer()` で `startingDealer` を決める(ランダムは再戦ごとに選び直す)。
-  設定は対局データに載せて配るので再接続後も引き継ぐ。自動マッチングはホスト(ランダムに決まる east)が起家。
+### オンライン対戦(`online-shared.js` + `server/gameSession.js`、**サーバー主導**)
+- **対局はサーバーが進める**(牌山・ツモ・鳴けない捨て牌の見送り・流局・次局・再戦・時間切れの代行)。クライアントは
+  操作を `{type:"action", action:{type:"discard", tileId, riichi} | tsumo | ankan{kind} | kakan{kind} | ron | pon | minkan | pass | confirm | rematch}`
+  で送るだけ。サーバーは合法か確かめてから反映し、各席に**その席が見てよい情報だけ**の対局データを配る
+  (相手の手牌(局の途中)・牌山・未公開のドラ表示牌・嶺上牌・公開前の裏ドラは `{id:"h0", kind:null}` のような伏せ牌。
+  牌IDは種類を含むので、伏せ牌には意味の無いIDを付ける。局の結果画面では両者の手牌を公開)。
+  観戦者には両者の手牌を見せ、牌山は伏せる。
+- 対局の進め方は `app.js` の MahjongApp(CPU対戦・ローカル用)と `server/gameSession.js` の**2か所にある**
+  (どちらもエンジンの同じ関数を呼ぶ)。進め方を変えるときは両方を直し、`npm run bundle` でサーバー用エンジンも作り直す。
+- クライアント(`OnlineMahjongApp`)は `canAct` で自分の席の操作だけ許可し、自動進行・次局送り・新規対局は行わない。
+  `doDiscard` などは `_sendAction()` で送信し、結果はサーバーからの対局データ(`version` 付き。古い版は捨てる)で反映する。
+  相手の手出し/ツモ切りの演出はサーバーが付ける `lastAction.tsumogiri` で判断する。
+- 伏せ牌(`kind: null`)は `makeTileEl` が常に裏向きで描き、`tileSortKey` は並べ替えない。相手の手牌を使う計算
+  (ロンできるか等)をしないよう、選択肢の計算は `canAct` で自分の席と確かめてから行う。
+- 通信方式の版は `protocol: 2`(`WS_PROTOCOL_VERSION` / `PROTOCOL_VERSION`)。古いページは「アプリが古いため…」、
+  古いサーバーに新しいページで接続すると「サーバーが古いバージョンのため対戦できません」と出る。
+- 起家: ルーム作成時に 自分/相手/ランダム を選ぶ(`dealerChoice`、localStorage `mahjong_room_dealer`)。create で持ち時間と
+  一緒にサーバーへ送り、サーバーが起家を決める(ランダムは再戦ごとに選び直す)。自動マッチングは席をランダムに決め、east が起家。
 - 再接続: 座席トークンで5分以内なら同じ座席に戻れる。自動マッチングの自己マッチ防止に端末ID(localStorage `mahjong_ws_client_id`)。
 - 観戦: ロビー「観戦」から一覧(局・点数・観戦人数)またはルームコードで観戦。両者の手牌を公開表示、観戦者は操作不可。
   上側の手牌をタップすると視点(下側のプレイヤー)を切り替え。対局者の画面に「観戦 n人」。ルーム作成時に観戦の許可を選べる(自動マッチングは常に許可)。
@@ -114,7 +127,7 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - ロビー「牌譜」: 一覧(日時・種類・結果)から 再生 / ファイルに保存(JSON のダウンロード) / 削除、「ファイルを読み込む」で読み込み→再生。
 - 再生画面は対局画面と同じ描画(`ReplayMahjongApp extends MahjongApp`、操作・自動進行・配牌演出・持ち時間なし)。両者の手牌を公開、
   上側の手牌タップで視点切り替え。操作は トグル欄の位置に ⏮前の局 ◀ ▶▶自動再生 ▶ ⏭次の局 とスライダー(PC は←→↑↓キー)。
-- **オンライン対戦の対局中(未終局で最終更新から15分以内)の牌譜は再生・書き出しできない**(相手の手牌が見えてしまうため)。
+- オンライン対戦の牌譜は、サーバーから届いた局面(相手の手牌は局の途中は伏せ牌)をそのまま記録する。再生では伏せ牌は裏向き。
 
 ### 配牌の演出(`app.js` の `updateDealAnimation` ほか)
 - 局の始めは手牌なし → 0.3秒ごとに親→子の交互に 4,4,4,1 枚ずつ配られた順に表示(毎回 `dahai1` の音)
@@ -150,14 +163,21 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 
 ## 6. 中継サーバー
 
-- 本番は **Render(`wss://ryanma.onrender.com`)** にユーザーがデプロイしている。サーバーのファイル
-  (`server/server.js`・`protocol.js`・`roomRegistry.js`)を変えたら、**ユーザーに再デプロイが必要と伝える**。
+- 本番は **Render(`wss://ryanma.onrender.com`)** にユーザーがデプロイしている。デプロイ元は別リポジトリ
+  `RyanD-Me/ryanma`(`server/` の中身を直下に置いたもの)。サーバーのファイル
+  (`server.js`・`protocol.js`・`roomRegistry.js`・`gameSession.js`・`mahjong-engine.js`)を変えたら、
+  **ryanma リポジトリへの反映と再デプロイが必要とユーザーに伝える**(`src/` を変えた場合も `mahjong-engine.js` が変わる)。
 - 2026-09-25 時点の最新のサーバーは、観戦(`list-games`/`spectate`/`stop-spectate`、`spectators` 通知)、オンライン人数
   (`online-count`)、自動マッチングの端末ID(`clientId`)に対応している。本番がこれに更新済みかは未確認なので、
   観戦や人数表示が動かない場合はまず本番サーバーの更新を疑う。
 - プロトコルの一覧は `server/protocol.js` の冒頭コメント、デプロイ方法は `server/README.md`。
 
 ## 7. 設計上の注意(ハマりどころ)
+
+- **改ざん対策**: 外から届く文字列(相手の名前・局面・牌譜ファイル)は HTML として扱わない(`textContent` を使い、
+  `innerHTML` に差し込まない)。相手・観戦先・牌譜から届く局面は `isValidGameState` / `isValidGamePayload` で形を確かめる。
+  ページには CSP(`build-html-ws.js` が埋め込んだスクリプトのハッシュを入れる)があり、埋め込み以外のスクリプト・
+  外部への通信(WebSocket 以外)は動かない。**新しく外部のスクリプトや画像・通信先を使うときは CSP も直す**。
 
 - 和了可否の判定(ボタン・CPU・自動和了)と実際の和了処理は同じ `buildWinContext` を通す。
 - 局を終わらせる新しい経路を足すときは、直前で `snapshotPreResultScores()` を呼ぶ。

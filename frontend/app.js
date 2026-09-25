@@ -783,6 +783,104 @@ function windLabel(w) {
 // Seat自体は固定のプレイヤースロットに過ぎず、実際の自風(東家/南家)は
 // その局の親が誰かによって変わるため、必ず MahjongApp#seatLabel を経由する。
 
+// ---------------- 外から届いた対局データの検査 ----------------
+//
+// オンライン対戦の相手・観戦・読み込んだ牌譜のファイルから届く局面(state)は、改造したクライアントや
+// 手で書き換えたファイルから送られてくる可能性がある。形が正しくないデータは画面に使わない
+// (想定外の値で画面が壊れたり、文字列が画面に紛れ込んだりしないように)。
+
+const VALID_SEATS = ["east", "south"];
+const VALID_WINDS = ["east", "south", "west", "north"];
+const VALID_HONORS = ["east", "south", "west", "north", "white", "green", "red"];
+const VALID_PHASES = ["waiting_for_players", "dealing", "draw", "discard", "call_window", "kan_replacement", "round_end", "game_end"];
+
+function isValidTileKind(k) {
+  if (!k || typeof k !== "object") return false;
+  if (k.kind === "honor") return VALID_HONORS.includes(k.honor);
+  if (k.kind !== "number" || !Number.isInteger(k.rank)) return false;
+  if (k.suit === "man") return k.rank >= 1 && k.rank <= 9;
+  return (k.suit === "pin" || k.suit === "sou") && (k.rank === 1 || k.rank === 9);
+}
+
+/** 牌。kind が null の牌は伏せた牌(相手の手牌・牌山など、中身を知らされていない牌) */
+function isValidTile(t) {
+  return (
+    !!t && typeof t === "object" && typeof t.id === "string" && t.id.length > 0 && t.id.length <= 32 &&
+    (t.kind === null || isValidTileKind(t.kind)) &&
+    (t.isRedDora === undefined || typeof t.isRedDora === "boolean")
+  );
+}
+
+function isValidTileList(list, max) {
+  return Array.isArray(list) && list.length <= max && list.every(isValidTile);
+}
+
+/** 真偽値の項目(false の場合に省かれていることもある) */
+function isOptionalBool(v) {
+  return v === undefined || typeof v === "boolean";
+}
+
+function isValidScore(n) {
+  return typeof n === "number" && Number.isFinite(n) && Math.abs(n) <= 10000000;
+}
+
+function isValidPlayerState(p, seat) {
+  if (!p || typeof p !== "object" || p.seat !== seat) return false;
+  if (!isValidTileList(p.hand, 14) || !isValidScore(p.score)) return false;
+  if (p.drawnTile !== null && !isValidTile(p.drawnTile)) return false;
+  if (!Array.isArray(p.melds) || p.melds.length > 4) return false;
+  for (const m of p.melds) {
+    if (!m || !["triplet", "kan_open", "kan_closed"].includes(m.type) || !isValidTileList(m.tiles, 4) || m.tiles.length < 3) return false;
+    if (m.calledTile != null && !isValidTile(m.calledTile)) return false;
+  }
+  if (!Array.isArray(p.discards) || p.discards.length > 60) return false;
+  for (const d of p.discards) {
+    if (!d || !isValidTile(d.tile) || !isOptionalBool(d.isRiichiDeclaration) || !isOptionalBool(d.isCalled)) return false;
+  }
+  for (const f of ["isRiichi", "isDoubleRiichi", "hasIppatsuChance", "isTemporaryFuriten"]) {
+    if (!isOptionalBool(p[f])) return false;
+  }
+  if (p.forbiddenDiscardKind != null && !isValidTileKind(p.forbiddenDiscardKind)) return false;
+  return true;
+}
+
+/** 和了の内容(lastWin)として最低限正しい形か(null は和了なし) */
+function isValidLastWin(w) {
+  return w === null || w === undefined || (!!w && typeof w === "object" && VALID_SEATS.includes(w.seat) && !!w.scoreResult && typeof w.scoreResult === "object");
+}
+
+/** オンライン対戦で相手・観戦先から届く対局データ一式として正しい形か */
+function isValidGamePayload(g) {
+  return !!g && typeof g === "object" && isValidGameState(g.state) && isValidLastWin(g.lastWin) && (g.log === undefined || Array.isArray(g.log));
+}
+
+/** 局面(GameState)として正しい形か */
+function isValidGameState(s) {
+  if (!s || typeof s !== "object") return false;
+  if (!VALID_PHASES.includes(s.phase) || !VALID_WINDS.includes(s.roundWind)) return false;
+  if (s.roundNumber !== 1 && s.roundNumber !== 2) return false;
+  for (const f of ["overallRoundIndex", "riichiSticks", "kanCount"]) {
+    if (!Number.isInteger(s[f]) || s[f] < 0 || s[f] > 1000) return false;
+  }
+  if (s.roundSerial !== undefined && (!Number.isInteger(s.roundSerial) || s.roundSerial < 0)) return false;
+  for (const f of ["startingDealer", "dealer", "currentTurn"]) {
+    if (!VALID_SEATS.includes(s[f])) return false;
+  }
+  const w = s.wall;
+  if (!w || typeof w !== "object") return false;
+  for (const f of ["liveWall", "doraIndicatorTiles", "revealedDoraIndicators", "uraDoraIndicatorTiles", "deadWallDraws"]) {
+    if (!isValidTileList(w[f], 80)) return false;
+  }
+  if (!s.players || !VALID_SEATS.every((seat) => isValidPlayerState(s.players[seat], seat))) return false;
+  const ld = s.lastDiscard;
+  if (ld !== null && (!ld || !isValidTile(ld.tile) || !VALID_SEATS.includes(ld.from))) return false;
+  const r = s.roundEndReason;
+  if (r !== null && (!r || !["tsumo", "ron", "exhaustive_draw", "abortive_draw"].includes(r.type))) return false;
+  const g = s.gameEndReason;
+  if (g !== null && g !== undefined && (!g || !["all_rounds_complete", "bust"].includes(g.type))) return false;
+  return true;
+}
+
 // ---------------- 理牌(手牌の並び順) ----------------
 
 const SUIT_SORT_ORDER = { man: 0, pin: 1, sou: 2 };
@@ -790,6 +888,7 @@ const HONOR_SORT_ORDER = { east: 0, south: 1, west: 2, north: 3, white: 4, green
 
 /** 自動理牌の並び順: 萬子1-9 → 筒子1・9 → 索子1・9 → 字牌(東南西北白發中) */
 function tileSortKey(kind) {
+  if (!kind) return 999; // 伏せ牌(中身を知らされていない牌)は並べ替えない
   if (kind.kind === "number") {
     return SUIT_SORT_ORDER[kind.suit] * 100 + kind.rank;
   }
@@ -807,6 +906,8 @@ function makeTileEl(
   tile,
   { faceDown = false, onClick = null, highlight = false, armed = false, onArm = null, dimmed = false } = {}
 ) {
+  // 中身の無い牌(サーバーが伏せて送ってきた相手の手牌・牌山など)は常に裏向きで描く
+  if (!tile.kind) faceDown = true;
   const el = document.createElement("button");
   el.type = "button";
   el.className = faceDown
@@ -2074,9 +2175,18 @@ class MahjongApp {
 
     const roundInfo = document.createElement("div");
     roundInfo.className = "round-info";
-    roundInfo.innerHTML = `<span class="round-badge">${windLabel(this.state.roundWind)}${this.state.roundNumber}局</span>
-      <span>山 残り${this.state.wall.liveWall.length}枚</span>
-      <span>供託 ${this.state.riichiSticks}本</span>`;
+    // 局の情報はオンライン対戦では相手から届いた値なので、HTML として解釈させない(textContent で組み立てる)
+    [
+      [`${windLabel(this.state.roundWind)}${this.state.roundNumber}局`, "round-badge"],
+      [`山 残り${this.state.wall.liveWall.length}枚`, ""],
+      [`供託 ${this.state.riichiSticks}本`, ""],
+    ].forEach(([text, cls], i) => {
+      if (i > 0) roundInfo.appendChild(document.createTextNode(" "));
+      const span = document.createElement("span");
+      if (cls) span.className = cls;
+      span.textContent = text;
+      roundInfo.appendChild(span);
+    });
     middle.appendChild(roundInfo);
 
     center.appendChild(middle);
@@ -3019,9 +3129,9 @@ class MahjongApp {
       // 対象の捨て牌は河の中で縁が光っているため、どの牌に対する選択肢かの説明は置かない。
       const discard = this.state.lastDiscard;
       const seat = E.otherSeat(discard.from);
-      const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
-
+      // 選択肢は自分が操作できる家の分だけ調べる(オンライン対戦では相手の手牌は伏せ牌で届くため)
       if (this.canAct("callWindow", seat)) {
+        const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
         if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
         if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
         if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));

@@ -2,7 +2,45 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { RoomRegistry, handleClientMessage } = require("./protocol");
+const { RoomRegistry, handleClientMessage: rawHandleClientMessage, PROTOCOL_VERSION } = require("./protocol");
+
+/** 今のアプリと同じく、create/join/rejoin/match には通信方式の版(protocol)を付けて送る */
+function handleClientMessage(registry, conn, msg) {
+  if (msg && ["create", "join", "rejoin", "match"].includes(msg.type) && msg.protocol === undefined) {
+    msg = Object.assign({}, msg, { protocol: PROTOCOL_VERSION });
+  }
+  return rawHandleClientMessage(registry, conn, msg);
+}
+
+/** タイマーを手動で動かせる RoomRegistry(配牌の演出の待ちなどを進めるため) */
+function timerRegistry(extra = {}) {
+  const timers = [];
+  const registry = new RoomRegistry(
+    Object.assign(
+      {
+        setTimer: (fn, ms) => {
+          const t = { fn, ms, done: false };
+          timers.push(t);
+          return t;
+        },
+        clearTimer: (t) => {
+          if (t) t.done = true;
+        },
+      },
+      extra
+    )
+  );
+  /** 待ち時間が ms 以下のタイマーを動かす */
+  registry.runTimers = (ms) => {
+    for (const t of timers.slice()) {
+      if (!t.done && t.ms <= ms) {
+        t.done = true;
+        t.fn();
+      }
+    }
+  };
+  return registry;
+}
 
 function fakeConn(label) {
   const received = [];
@@ -39,14 +77,14 @@ test("join: 両者揃うと両方にreadyが届く", () => {
   assert.equal(guest.received[0].type, "joined");
   assert.equal(guest.received[0].seat, "south");
 
-  // 両者に ready が届く(hostは joined ではなく直接 ready、guestは joined の次に ready)
+  // 両者に ready が届き、続けてサーバーが始めた対局のデータが届く
   assert.deepEqual(
     host.received.map((m) => m.type),
-    ["created", "ready"]
+    ["created", "ready", "game"]
   );
   assert.deepEqual(
     guest.received.map((m) => m.type),
-    ["joined", "ready"]
+    ["joined", "ready", "game"]
   );
 });
 
@@ -103,18 +141,85 @@ test("join: 存在しないコードはエラーで返す(例外を投げない)
   assert.equal(guest.received[0].type, "error");
 });
 
-test("game: もう一方にだけ中継される", () => {
-  const registry = new RoomRegistry();
+/** host/guest のルームで対局を始め、配牌の演出の待ちも済ませた状態を作る */
+function playingRoom(registry, createMsg = {}) {
   const host = fakeConn("host");
   const guest = fakeConn("guest");
-  handleClientMessage(registry, host, { type: "create" });
+  handleClientMessage(registry, host, Object.assign({ type: "create", name: "たろう" }, createMsg));
   const code = host.received[0].code;
-  handleClientMessage(registry, guest, { type: "join", code });
+  handleClientMessage(registry, guest, { type: "join", code, name: "じろう" });
+  registry.runTimers(3000);
+  const conns = { east: host, south: guest };
+  return { host, guest, code, conns, session: registry.rooms.get(code).session };
+}
 
-  handleClientMessage(registry, host, { type: "game", payload: { phase: "draw" } });
-  const gameMsgs = guest.received.filter((m) => m.type === "game");
-  assert.equal(gameMsgs.length, 1);
-  assert.deepEqual(gameMsgs[0].payload, { phase: "draw" });
+test("古いアプリ(protocol なし)の create/join/match/rejoin と、対局データの送信は受け付けない", () => {
+  const registry = new RoomRegistry();
+  const old = fakeConn("old");
+  for (const type of ["create", "join", "match"]) {
+    rawHandleClientMessage(registry, old, { type, code: "ABCDEF" });
+    assert.equal(old.received.at(-1).type, "error");
+    assert.match(old.received.at(-1).message, /ページを再読み込み/);
+  }
+  rawHandleClientMessage(registry, old, { type: "rejoin", code: "ABCDEF", token: "x" });
+  assert.equal(old.received.at(-1).type, "rejoin-failed");
+  assert.equal(registry.roomCount(), 0);
+
+  const r2 = timerRegistry();
+  const { host, guest } = playingRoom(r2);
+  const before = guest.received.length;
+  handleClientMessage(r2, host, { type: "game", payload: { state: { hacked: true } } });
+  assert.equal(host.received.at(-1).type, "error");
+  assert.equal(guest.received.length, before); // 相手には何も届かない
+});
+
+test("対局: サーバーが始め、各自には自分の手牌だけが見え、相手の手牌・牌山は伏せられている", () => {
+  const registry = timerRegistry();
+  const { host, guest, session } = playingRoom(registry, { dealerChoice: "opponent", timeControl: { perAction: 3, bank: 5 } });
+  assert.equal(session.state.startingDealer, "south");
+  assert.deepEqual(session.timeControl, { perAction: 3, bank: 5 });
+  const hv = host.received.filter((m) => m.type === "game").at(-1).payload;
+  const gv = guest.received.filter((m) => m.type === "game").at(-1).payload;
+  assert.ok(hv.state.players.east.hand.every((t) => t.kind !== null));
+  assert.ok(hv.state.players.south.hand.every((t) => t.kind === null));
+  assert.ok(gv.state.players.south.hand.every((t) => t.kind !== null));
+  assert.ok(gv.state.players.east.hand.every((t) => t.kind === null));
+  assert.ok(hv.state.wall.liveWall.every((t) => t.kind === null));
+  // 起家(south)がツモ済み。east からは中身の分からないツモ牌として見える
+  assert.equal(gv.state.players.south.drawnTile.kind !== null, true);
+  assert.deepEqual(hv.state.players.south.drawnTile, { id: "hd", kind: null, isRedDora: false });
+});
+
+test("action: 合法な操作は反映されて全員に配られ、合法でない操作は本人にだけ action-rejected", () => {
+  const registry = timerRegistry();
+  const { conns, session } = playingRoom(registry);
+  const turn = session.state.currentTurn;
+  const other = turn === "east" ? "south" : "east";
+  const otherBefore = conns[other].received.length;
+
+  // 相手の手番に打牌しようとする → 拒否(相手には何も届かない)
+  handleClientMessage(registry, conns[other], { type: "action", action: { type: "discard", tileId: session.state.players[other].hand[0].id } });
+  assert.equal(conns[other].received.at(-2).type, "action-rejected");
+  assert.equal(conns[other].received.at(-1).type, "game");
+
+  // 手牌に無い牌 → 拒否
+  handleClientMessage(registry, conns[turn], { type: "action", action: { type: "discard", tileId: "number:man:1#9" } });
+  assert.equal(conns[turn].received.at(-2).type, "action-rejected");
+
+  // ツモ切り → 両者に新しい局面が届く
+  const drawnId = session.state.players[turn].drawnTile.id;
+  const versionBefore = session.version;
+  handleClientMessage(registry, conns[turn], { type: "action", action: { type: "discard", tileId: drawnId, riichi: false } });
+  assert.ok(session.version > versionBefore);
+  const seen = conns[other].received.filter((m) => m.type === "game").at(-1).payload;
+  assert.ok(conns[other].received.length > otherBefore);
+  const discards = seen.state.players[turn].discards;
+  assert.equal(discards[discards.length - 1].tile.id, drawnId); // 捨て牌は公開情報
+  assert.equal(seen.lastAction.tsumogiri, true);
+
+  // 形の壊れた action も例外にならない
+  assert.doesNotThrow(() => handleClientMessage(registry, conns[turn], { type: "action", action: null }));
+  assert.doesNotThrow(() => handleClientMessage(registry, conns[turn], { type: "action" }));
 });
 
 test("不明なtypeやmsg自体が不正な場合はerrorを返す(例外を投げない)", () => {
@@ -136,14 +241,13 @@ test("ping → pong", () => {
 });
 
 test("rejoin: 切断後に同じトークンで戻ると rejoined(最新の対局データ付き)、相手には peer-online", () => {
-  const registry = new RoomRegistry({ setTimer: () => ({}), clearTimer: () => {} });
+  const registry = timerRegistry();
   const host = fakeConn("host");
   const guest = fakeConn("guest");
   handleClientMessage(registry, host, { type: "create", name: "たろう" });
   const code = host.received[0].code;
   handleClientMessage(registry, guest, { type: "join", code, name: "じろう" });
   const guestToken = guest.received[0].token;
-  handleClientMessage(registry, host, { type: "game", payload: { phase: "draw" } });
 
   registry.handleDisconnect(guest);
   assert.equal(host.received.at(-1).type, "peer-offline");
@@ -153,7 +257,9 @@ test("rejoin: 切断後に同じトークンで戻ると rejoined(最新の対�
   const r = guest2.received[0];
   assert.equal(r.type, "rejoined");
   assert.equal(r.seat, "south");
-  assert.deepEqual(r.game, { phase: "draw" });
+  // 最新の対局データ(自分=south 向け: 自分の手牌は見え、相手の手牌は伏せ牌)
+  assert.ok(r.game.state.players.south.hand.every((t) => t.kind !== null));
+  assert.ok(r.game.state.players.east.hand.every((t) => t.kind === null));
   assert.deepEqual(r.names, { east: "たろう", south: "じろう" });
   assert.equal(r.peerConnected, true);
   assert.equal(r.bothSeated, true);
@@ -208,8 +314,8 @@ test("match: 1人目は match-waiting、2人目が来ると両者に matched と
   handleClientMessage(registry, a, { type: "match", name: "たろう" });
   assert.deepEqual(a.received.map((m) => m.type), ["match-waiting"]);
   handleClientMessage(registry, b, { type: "match", name: "じろう" });
-  assert.deepEqual(a.received.map((m) => m.type), ["match-waiting", "matched", "ready"]);
-  assert.deepEqual(b.received.map((m) => m.type), ["matched", "ready"]);
+  assert.deepEqual(a.received.map((m) => m.type), ["match-waiting", "matched", "ready", "game"]);
+  assert.deepEqual(b.received.map((m) => m.type), ["matched", "ready", "game"]);
   const ma = a.received[1];
   const mb = b.received[0];
   assert.equal(ma.seat, "east");
@@ -217,9 +323,8 @@ test("match: 1人目は match-waiting、2人目が来ると両者に matched と
   assert.equal(ma.code, mb.code);
   assert.ok(ma.token && mb.token && ma.token !== mb.token);
   assert.deepEqual(a.received[2].names, { east: "たろう", south: "じろう" });
-  // 組んだ後は通常のルームと同じく中継される
-  handleClientMessage(registry, a, { type: "game", payload: { x: 1 } });
-  assert.deepEqual(b.received.at(-1), { type: "game", payload: { x: 1 } });
+  // 組んだ後はサーバーが対局を始めている(east 席が起家)
+  assert.equal(registry.rooms.get(ma.code).session.state.startingDealer, "east");
   assert.equal(registry.matchQueue.length, 0);
 });
 
@@ -331,22 +436,14 @@ test("match: どちらが east(起家)になるかはランダム(乱数によ�
 
 // ---------------- 観戦 ----------------
 
-/** host/guest でルームを作って対局データを1回中継した状態を作る */
+/** host/guest でルームを作って対局が始まった状態を作る */
 function startedRoom(registry, createMsg = {}) {
-  const host = fakeConn("host");
-  const guest = fakeConn("guest");
-  handleClientMessage(registry, host, Object.assign({ type: "create", name: "たろう" }, createMsg));
-  const code = host.received[0].code;
-  handleClientMessage(registry, guest, { type: "join", code, name: "じろう" });
-  const payload = {
-    state: { phase: "discard", roundWind: "south", roundNumber: 2, players: { east: { score: 50000 }, south: { score: 40000 } } },
-  };
-  handleClientMessage(registry, host, { type: "game", payload });
-  return { host, guest, code, payload };
+  const { host, guest, code, session } = playingRoom(registry, createMsg);
+  return { host, guest, code, session };
 }
 
 test("観戦: 一覧には開始済み・観戦許可の対局だけが局と点数付きで載る", () => {
-  const registry = new RoomRegistry();
+  const registry = timerRegistry();
   const { code } = startedRoom(registry);
   startedRoom(registry, { allowSpectate: false }); // 観戦不可
   const waitingHost = fakeConn("waiting");
@@ -359,39 +456,46 @@ test("観戦: 一覧には開始済み・観戦許可の対局だけが局と点
   assert.equal(msg.list.length, 1);
   assert.equal(msg.list[0].code, code);
   assert.deepEqual(msg.list[0].names, { east: "たろう", south: "じろう" });
-  assert.deepEqual(msg.list[0].round, { roundWind: "south", roundNumber: 2, scores: { east: 50000, south: 40000 }, ended: false });
+  assert.deepEqual(msg.list[0].round, { roundWind: "east", roundNumber: 1, scores: { east: 45000, south: 45000 }, ended: false });
   assert.equal(msg.list[0].spectators, 0);
   // 一覧に牌山・手牌などの対局データそのものは含めない
   assert.equal(msg.list[0].game, undefined);
 });
 
 test("観戦: 入室で最新の対局データが届き、以後の中継も届く。人数は全員に通知される", () => {
-  const registry = new RoomRegistry();
-  const { host, guest, code, payload } = startedRoom(registry);
+  const registry = timerRegistry();
+  const { host, guest, code, session } = startedRoom(registry);
   const viewer = fakeConn("viewer");
   handleClientMessage(registry, viewer, { type: "spectate", code: code.toLowerCase() });
 
   const spectating = viewer.received.find((m) => m.type === "spectating");
   assert.ok(spectating);
-  assert.deepEqual(spectating.game, payload);
+  // 観戦者には両者の手牌を見せる(牌山は伏せる)
+  assert.ok(spectating.game.state.players.east.hand.every((t) => t.kind !== null));
+  assert.ok(spectating.game.state.players.south.hand.every((t) => t.kind !== null));
+  assert.ok(spectating.game.state.wall.liveWall.every((t) => t.kind === null));
   assert.equal(spectating.spectators, 1);
   assert.deepEqual(host.received.at(-1), { type: "spectators", count: 1 });
   assert.deepEqual(guest.received.at(-1), { type: "spectators", count: 1 });
 
-  const next = { state: { phase: "draw", players: {} } };
-  handleClientMessage(registry, guest, { type: "game", payload: next });
-  assert.deepEqual(viewer.received.at(-1), { type: "game", payload: next });
-  assert.deepEqual(host.received.at(-1), { type: "game", payload: next });
+  const turn = session.state.currentTurn;
+  const conn = turn === "east" ? host : guest;
+  handleClientMessage(registry, conn, { type: "action", action: { type: "discard", tileId: session.state.players[turn].drawnTile.id } });
+  assert.equal(viewer.received.at(-1).type, "game");
+  assert.equal(viewer.received.at(-1).payload.version, session.version);
+  assert.equal(host.received.at(-1).type, "game");
 });
 
-test("観戦: 観戦者からの game は中継しない・観戦中は参加できない", () => {
-  const registry = new RoomRegistry();
+test("観戦: 観戦者からの game・action は受け付けない・観戦中は参加できない", () => {
+  const registry = timerRegistry();
   const { host, guest, code } = startedRoom(registry);
   const viewer = fakeConn("viewer");
   handleClientMessage(registry, viewer, { type: "spectate", code });
   const hostCount = host.received.length;
   const guestCount = guest.received.length;
   handleClientMessage(registry, viewer, { type: "game", payload: { state: { hacked: true } } });
+  handleClientMessage(registry, viewer, { type: "action", action: { type: "pass" } });
+  assert.equal(viewer.received.at(-1).type, "action-rejected");
   assert.equal(host.received.length, hostCount);
   assert.equal(guest.received.length, guestCount);
   handleClientMessage(registry, viewer, { type: "create" });
@@ -399,7 +503,7 @@ test("観戦: 観戦者からの game は中継しない・観戦中は参加で
 });
 
 test("観戦: 観戦不可・未開始・存在しないルームは spectate-failed", () => {
-  const registry = new RoomRegistry();
+  const registry = timerRegistry();
   const { code: privateCode } = startedRoom(registry, { allowSpectate: false });
   const waitingHost = fakeConn("waiting");
   handleClientMessage(registry, waitingHost, { type: "create" });
@@ -412,7 +516,7 @@ test("観戦: 観戦不可・未開始・存在しないルームは spectate-fa
 });
 
 test("観戦: 観戦者の切断・観戦終了で人数が減り、対局者の退室で観戦者に spectate-ended が届く", () => {
-  const registry = new RoomRegistry();
+  const registry = timerRegistry();
   const { host, guest, code } = startedRoom(registry);
   const v1 = fakeConn("v1");
   const v2 = fakeConn("v2");
@@ -433,14 +537,13 @@ test("観戦: 自動マッチングの対局は観戦できる", () => {
   handleClientMessage(registry, a, { type: "match" });
   handleClientMessage(registry, b, { type: "match" });
   const code = a.received.find((m) => m.type === "matched").code;
-  handleClientMessage(registry, a, { type: "game", payload: { state: { phase: "draw", players: {} } } });
   const viewer = fakeConn("viewer");
   handleClientMessage(registry, viewer, { type: "spectate", code });
   assert.equal(viewer.received.at(-1).type, "spectating");
 });
 
 test("観戦: 両者とも切断中の対局は一覧に出さない", () => {
-  const registry = new RoomRegistry({ setTimer: () => 1, clearTimer: () => {} });
+  const registry = timerRegistry();
   const { host, guest } = startedRoom(registry);
   registry.handleDisconnect(host);
   const viewer = fakeConn("viewer");

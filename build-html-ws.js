@@ -63,6 +63,33 @@ for (const [placeholder, filePath] of replacements) {
   html = html.replace(placeholder, () => inserted);
 }
 
+// Content-Security-Policy: このページに埋め込んだスクリプト(ハッシュが一致するもの)以外は実行させない。
+// 万一、相手から届いた文字列などが HTML として画面に紛れ込んでも、仕込まれたスクリプト
+// (onerror= 等)は動かない。通信先は WebSocket(中継サーバー)だけ、フォントは Google Fonts だけに限る。
+const crypto = require("crypto");
+const scriptHashes = [];
+html.replace(/<script>([\s\S]*?)<\/script>/g, (m, body) => {
+  scriptHashes.push(`'sha256-${crypto.createHash("sha256").update(body, "utf8").digest("base64")}'`);
+  return m;
+});
+const csp = [
+  "default-src 'none'",
+  `script-src ${scriptHashes.join(" ")}`,
+  "style-src 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com",
+  "connect-src ws: wss:",
+  "media-src data: blob:",
+  "img-src data: blob:",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "object-src 'none'",
+].join("; ");
+if (!html.includes("/*CSP_PLACEHOLDER*/")) {
+  console.error("shell-ws.html に /*CSP_PLACEHOLDER*/ が見つかりません。");
+  process.exit(1);
+}
+html = html.replace("/*CSP_PLACEHOLDER*/", () => csp);
+
 const outPath = path.join(frontendDir, "index-ws.html");
 fs.writeFileSync(outPath, html);
 console.log(`index-ws.html を生成しました (${fs.statSync(outPath).size} bytes、効果音 ${Object.keys(soundFiles).length} 個)`);

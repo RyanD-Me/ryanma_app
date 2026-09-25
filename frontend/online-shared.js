@@ -3,34 +3,21 @@
 /* global MahjongApp, MahjongEngine */
 
 /**
- * オンライン対戦の共通コントローラ(通信方式に依存しない部分)。
+ * オンライン対戦の画面(サーバー主導)。
  *
- * 対局の「真実」は、通信方式(Claude Artifactの`db` capabilityでも、WebRTCのデータ
- * チャネルでも)を問わず、既存のローカル対戦(ホットシート)版 MahjongApp が使っているのと
- * 全く同じ形の `state` オブジェクト(牌山・両者の手牌を含む)に、
- * lastWin・ログなど画面表示に必要な付随情報を足した1つの `game` オブジェクトとして
- * やり取りする。
+ * 対局はサーバーが進める(server/gameSession.js)。この画面は、サーバーから届く対局データ
+ * (`game`: その家が見てよい情報だけの局面 + 和了表示などの付随情報)を表示し、打牌・鳴き・和了・
+ * 結果画面の確認などの操作を `action` としてサーバーへ送るだけ。局面を自分で進めたり、相手へ
+ * 局面を送ったりはしない。相手の手牌・牌山はサーバーから中身の無い伏せ牌として届くため、
+ * ページを書き換えても見えず、合法でない操作はサーバーが受け付けない。
  *
- * 「相手の手牌を覗けてしまう」という情報秘匿の限界は受け入れる(通常の描画では常に
- * 相手の手牌を伏せて表示するので、見た目上は問題にならない。通信内容を直接覗けば
- * 分かってしまう、という技術的な限界があるだけ)。
- *
- * 書き込み(送信)競合を避けるため、「今その局面を進める権利を持つSeat」の画面だけが
- * 相手に送信する。これは canAct(kind, seat) フックで判定する(自分のSeatと一致する時だけ
- * true を返す)。次局送り・新規対局の開始のように乱数(牌山シャッフル)を伴う操作は、
- * ホスト側だけが行う。
- *
- * このクラスは `roomController` に以下のダックタイピングされたインターフェースだけを
- * 要求する(具体的な実装は online.js の RoomController(db方式) や p2p.js の
- * PeerRoomController(WebRTC方式)が提供する):
- *   - .latest: 直近の room ドキュメント相当のオブジェクト({seats, game, code?})
- *   - .onUpdate: (doc) => void を外部からセットされるコールバック(相手からの更新を受信した時に呼ぶ)
- *   - .onError: (err) => void を外部からセットされるコールバック
- *   - .publishGame(game): Promise<void> — game を相手に届ける
- *   - .stop(): 接続や購読を終了する
- *   - .code: 表示用の合言葉/ルームコード相当の文字列(無ければ null でよい)
- *   - .room: { presence, peers, onPeers } という room capability 相当のインターフェース
- *     (相手が「今つながっているか」の表示にのみ使う。無ければ null でよい)
+ * `roomController`(ws.js の WsRoomController)に求めるもの:
+ *   - .latest: 直近の room ドキュメント相当のオブジェクト({seats, names, game})
+ *   - .onUpdate / .onError / .onConnectionChange / .onReconnected / .onPeerLeft / .onFatal: コールバック
+ *   - .sendAction(action): 操作をサーバーへ送る(送れなければ false)
+ *   - .stop(): 接続を終了する
+ *   - .code: ルームコード
+ *   - .room: { presence, peers, onPeers }(相手が「今つながっているか」の表示用)
  */
 
 const OnlineEngine = MahjongEngine;
@@ -38,19 +25,19 @@ const OnlineEngine = MahjongEngine;
 class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
-   * @param {{roomController: object, mySeat: "east"|"south", hostSeat: "east"|"south", onExit?: Function,
+   * @param {{roomController: object, mySeat: "east"|"south", onExit?: Function,
    *   dealerChoice?: "self"|"opponent"|"random"}} opts
-   *   dealerChoice: 起家の決め方(ホスト=ルーム作成者から見て。既定 "self" = ホストが起家)
+   *   timeControl・dealerChoice はルーム作成時の設定(待機画面の表示用。実際の値はサーバーから届く)
    */
-  constructor(root, { roomController, mySeat, hostSeat, onExit, timeControl, isMatch, dealerChoice }) {
-    // 持ち時間はホスト(ルーム作成者)の設定を使う。ゲスト側の値は、対局データが届いた時点で
-    // ホストの設定に置き換わる(_onRoomDoc)。
+  constructor(root, { roomController, mySeat, onExit, timeControl, isMatch, dealerChoice }) {
     super(root, { autoStart: false, onExit, timeControl });
     this.roomController = roomController;
     this.mySeat = mySeat;
-    this.hostSeat = hostSeat;
-    /** 起家の決め方(ホストの設定)。対局データと一緒に配るので、再接続後の再戦でも引き継がれる */
     this.dealerChoice = ["self", "opponent", "random"].includes(dealerChoice) ? dealerChoice : "self";
+    /** 最後に反映した対局データの版(古いデータが後から届いても使わない) */
+    this._version = -1;
+    /** 操作を送って、その結果(新しい版)が届くのを待っている間は、同じ局面で二重に送らない */
+    this._awaitingVersion = null;
     this.onExit = onExit;
     /** 自動マッチングで組まれた対局か(ルームコードは内部用なので待機画面に出さない) */
     this.isMatch = !!isMatch;
@@ -70,6 +57,7 @@ class OnlineMahjongApp extends MahjongApp {
     this.connectionEndedMessage = null;
 
     roomController.onUpdate = (doc) => this._onRoomDoc(doc);
+    roomController.onActionRejected = () => this._onActionRejected();
     roomController.onError = (err) => {
       this.addLog(`通信エラーが発生しました(${(err && (err.message || err.code)) || err})。`);
       this._refresh();
@@ -164,117 +152,84 @@ class OnlineMahjongApp extends MahjongApp {
   }
 
   canAct(kind, seat) {
-    // 再接続中・対局終了後は、操作も自動進行(自動ツモ・自動ツモ切り・自動和了・次局送り)も
-    // 一切行わない。サーバーに届かない進行を自分の画面だけで進めてしまうと相手とずれるため。
+    // 再接続中・対局終了後は操作しない。ツモ・見送りの自動進行・次局送り・新しい対局の開始は
+    // サーバーが行うので、この画面では行わない。
     if (!this._isConnected() || this.connectionEndedMessage) return false;
-    if (kind === "nextRound" || kind === "newGame") {
-      // 牌山のシャッフルを伴う進行は、送信が二重に走らないようホスト側だけが行う。
-      return this.mySeat === this.hostSeat;
-    }
+    if (kind === "nextRound" || kind === "newGame" || kind === "autoAdvance") return false;
     return seat === this.mySeat;
   }
 
-  /** 自分の操作で状態が変わった後、相手に送信する。 */
+  /** 状態の反映は、サーバーから届いた時だけ行う(自分では局面を進めない) */
   publish() {
-    // まず自分の画面には即座に反映する(体感速度のため。送信完了を待たない)。
-    // render() の中で autoAdvance() が更に状態を進めた場合は afterAutoAdvance() 経由で
-    // 送信されるので、ここでの送信と合わせて二重送信にならないよう _sendToNetwork 側で
-    // 内容が変わっていない送信は自動的に間引く。
+    this.armedTileId = null;
     this.render();
-    this._sendToNetwork();
   }
 
-  /**
-   * autoAdvance()(自動ツモ・自動スルー)が実際に自分の側で状態を進めた時に呼ばれる。
-   * これを配信し忘れると、相手の画面には「自動で進むはずの手番」がいつまでも
-   * 届かず対局が止まってしまうため、publish() からの明示的な送信と並ぶもう1つの
-   * 送信経路として必須。
-   */
-  afterAutoAdvance() {
-    this._sendToNetwork();
+  // ---- 操作はサーバーへ送るだけ(結果はサーバーから届く局面で反映する) ----
+
+  /** 操作をサーバーへ送る。同じ局面で二重に送らない */
+  _sendAction(action) {
+    if (!this._isConnected() || this.connectionEndedMessage) return;
+    if (this._awaitingVersion === this._version) return;
+    const sent = this.roomController.sendAction(action);
+    if (sent === false) return;
+    this._awaitingVersion = this._version;
+    this.armedTileId = null;
   }
 
-  /** 今の自分の状態一式を相手へ送信する(直前に送った内容と同じなら送らない)。 */
-  _sendToNetwork() {
-    const game = {
-      state: this.state,
-      lastWin: this.lastWin,
-      // ポン・カン・リーチの大きな表示は、鳴かれた/宣言された側にこそ知らせたいので、
-      // 和了表示(lastWin)と同じように相手の画面へも配信する。
-      lastCall: this.lastCall,
-      revealUraDora: this.revealUraDora,
-      lastExhaustiveOutcome: this.lastExhaustiveOutcome || null,
-      roundConfirmations: this.roundConfirmations,
-      roundScoreChange: this.roundScoreChange || null,
-      rematchVotes: this.rematchVotes,
-      // 持ち時間の設定(ホストの設定)。null は持ち時間なし
-      timeControl: this.timeControl,
-      // 起家の決め方(ホストの設定)
-      dealerChoice: this.dealerChoice,
-      log: this.log,
-    };
-    const json = JSON.stringify(game);
-    if (json === this._lastSentJson) return;
-    this._lastSentJson = json;
-    this.roomController.publishGame(game).catch(() => {
-      // 送れなかった分は、再接続時にサーバーの最新データへ合わせ直してからやり直す
-      // (_onReconnected で _lastSentJson をリセットする)。表示は接続状態の表示で十分なのでログは残さない。
-      this._lastSentJson = null;
-    });
+  doDiscard(tile) {
+    const riichi = !!this.pendingRiichi;
+    this.pendingRiichi = false;
+    this._sendAction({ type: "discard", tileId: tile.id, riichi });
+    this.render();
   }
 
-  /** 新しい対局(最初の対局・再戦)の起家。ルーム作成時の設定で決める(ランダムは対局ごとに選び直す) */
-  chooseStartingDealer() {
-    const guestSeat = OnlineEngine.otherSeat(this.hostSeat);
-    if (this.dealerChoice === "opponent") return guestSeat;
-    if (this.dealerChoice === "random") return Math.random() < 0.5 ? this.hostSeat : guestSeat;
-    return this.hostSeat;
+  doTsumo() {
+    this._sendAction({ type: "tsumo" });
   }
 
-  /** ホスト側: 両者の着席(接続)が揃った時点で対局を初期化して配信する。 */
-  startGameAsHost() {
-    const { wall } = OnlineEngine.buildWall();
-    const revealed = OnlineEngine.revealNextDoraIndicator(wall);
-    const dealer = this.chooseStartingDealer();
-    // 配牌は親(東家)から順に配る
-    const { wall: dealtWall, hands } = OnlineEngine.dealInitialHands(revealed, [dealer, OnlineEngine.otherSeat(dealer)]);
+  doRon() {
+    this._sendAction({ type: "ron" });
+  }
 
-    this.state = {
-      gameId: this.roomController.code || "online",
-      phase: "draw",
-      roundWind: "east",
-      roundNumber: 1,
-      overallRoundIndex: 1,
-      roundSerial: 1,
-      riichiSticks: 0,
-      startingDealer: dealer,
-      dealer,
-      kanCount: 0,
-      fourKanAbortivePending: false,
-      wall: dealtWall,
-      players: {
-        east: Object.assign({}, OnlineEngine.createInitialPlayerState("east", 45000), { hand: hands.east }),
-        south: Object.assign({}, OnlineEngine.createInitialPlayerState("south", 45000), { hand: hands.south }),
-      },
-      currentTurn: dealer,
-      lastDiscard: null,
-      roundEndReason: null,
-      totalRounds: 8,
-      startingScore: 45000,
-      gameEndReason: null,
-    };
-    this.setLastWin(null);
-    this.setLastCall(null);
-    this.revealUraDora = false;
-    this.setExhaustiveDrawOutcome(null);
-    // 「鳴き無し」「ツモ切り」は対局開始時にもオフへ戻す(次局判定用のインデックスも合わせておく)。
-    this.noCall = false;
-    this.autoTsumogiri = false;
-    this._roundTogglesResetIndex = this.roundKey();
-    this._timerRoundKey = null;
-    this.log = [];
-    this.addLog(`オンライン対戦を開始しました(起家: ${this.playerName(dealer)})`);
-    this.publish();
+  doPass() {
+    this._sendAction({ type: "pass" });
+  }
+
+  doPon() {
+    this._sendAction({ type: "pon" });
+  }
+
+  doMinkan() {
+    this._sendAction({ type: "minkan" });
+  }
+
+  doAnkan(kind) {
+    this._sendAction({ type: "ankan", kind });
+  }
+
+  doKakan(kind) {
+    this._sendAction({ type: "kakan", kind });
+  }
+
+  confirmRound(seat) {
+    if (!this.state || this.state.phase !== "round_end" || this.roundConfirmations[seat]) return;
+    // 押したことはすぐ画面に出す(サーバーからの確認済みの反映を待たない)
+    this.roundConfirmations = Object.assign({}, this.roundConfirmations, { [seat]: true });
+    this.roomController.sendAction({ type: "confirm" });
+    this.render();
+  }
+
+  voteRematch(seat) {
+    if (!this.state || this.state.phase !== "game_end" || this.rematchVotes[seat]) return;
+    this.rematchVotes = Object.assign({}, this.rematchVotes, { [seat]: true });
+    this.roomController.sendAction({ type: "rematch" });
+    this.render();
+  }
+
+  /** 操作が受け付けられなかった(タイミングのずれなど)。最新の局面がすぐ届くので、送れる状態に戻す */
+  _onActionRejected() {
+    this._awaitingVersion = null;
   }
 
   /**
@@ -286,36 +241,38 @@ class OnlineMahjongApp extends MahjongApp {
    *
    * @returns {null | {seat: "east"|"south", oldHandLength: number}}
    */
-  detectTedashiDiscard(oldState, newState) {
-    if (!oldState || !newState) return null;
-    for (const seat of ["east", "south"]) {
-      const op = oldState.players[seat];
-      const np = newState.players[seat];
-      if (!op || !np) continue;
-      if (np.discards.length !== op.discards.length + 1) continue;
-      const oldCount = op.hand.length + (op.drawnTile ? 1 : 0);
-      const newCount = np.hand.length + (np.drawnTile ? 1 : 0);
-      if (newCount !== oldCount - 1) continue;
-      const added = np.discards[np.discards.length - 1];
-      const isTedashi = !op.drawnTile || op.drawnTile.id !== added.tile.id;
-      if (isTedashi) return { seat, oldHandLength: op.hand.length };
-      return null;
-    }
-    return null;
+  detectTedashiDiscard(oldState, newState, lastAction) {
+    if (!oldState || !newState || !lastAction || lastAction.type !== "discard" || lastAction.tsumogiri) return null;
+    const seat = lastAction.seat;
+    if (seat !== this.hiddenSeatFor()) return null;
+    const op = oldState.players[seat];
+    const np = newState.players[seat];
+    if (!op || !np || np.discards.length !== op.discards.length + 1) return null;
+    // 相手の手牌は伏せ牌で届くので、手出しかどうかはサーバーが付けた lastAction で判断する
+    return { seat, oldHandLength: op.hand.length };
   }
 
   _onRoomDoc(doc) {
     if (doc.names) this.playerNames = doc.names;
     if (!doc.game) {
-      const bothSeated = doc.seats && doc.seats.east && doc.seats.south;
-      if (bothSeated && this.mySeat === this.hostSeat) {
-        this.startGameAsHost();
-      } else {
-        this._renderWaitingScreen(doc);
-      }
+      // 対局はサーバーが始める。届くまでは待機画面
+      if (!this.state) this._renderWaitingScreen(doc);
       return;
     }
     const g = doc.game;
+    // 形の正しくないデータは使わない(画面を壊されないように)
+    if (!isValidGamePayload(g)) {
+      if (!this._invalidNoticeShown) {
+        this._invalidNoticeShown = true;
+        this.addLog("正しくない対局データが届いたため、無視しました。");
+      }
+      return;
+    }
+    // 古い対局データ(再接続の前後で順番が入れ替わった等)は使わない
+    const version = Number.isInteger(g.version) ? g.version : this._version + 1;
+    if (version < this._version) return;
+    this._version = version;
+    this._awaitingVersion = null;
     const oldState = this.state;
     const newState = g.state;
 
@@ -341,7 +298,7 @@ class OnlineMahjongApp extends MahjongApp {
       const currentSeq = this.lastCall ? this.lastCall.seq : null;
       if (incomingSeq !== currentSeq) this.setLastCall(incomingCall);
       this.revealUraDora = !!g.revealUraDora;
-      // 持ち時間はホストの設定に合わせる(古いデータで項目が無い場合は手元の値のまま)
+      // 持ち時間・起家の決め方はサーバーが持つ設定に合わせる
       if (g.timeControl !== undefined) this.timeControl = g.timeControl;
       if (g.dealerChoice !== undefined) this.dealerChoice = g.dealerChoice;
       // 結果画面の間、同じ流局結果が何度も届いても再表示タイマーをやり直さないよう、
@@ -351,33 +308,22 @@ class OnlineMahjongApp extends MahjongApp {
         this.setExhaustiveDrawOutcome(incomingExhaustive);
       }
       this.log = g.log || [];
-      // 結果画面の確認は両家が同時に送り合うことがあるため、同じ結果画面の間は OR で合成する
-      // (相手の送信が自分の確認を上書きして消さないように)。結果画面以外ではリセット。
+      // 結果画面の確認・再戦の希望はサーバーが持つ(自分が押した分は、届くまで押した表示のまま)
       const incomingConf = g.roundConfirmations || { east: false, south: false };
-      if (newState.phase === "round_end" && oldState && oldState.phase === "round_end") {
-        const mine = this.roundConfirmations || {};
-        this.roundConfirmations = { east: !!(incomingConf.east || mine.east), south: !!(incomingConf.south || mine.south) };
-      } else {
-        this.roundConfirmations = { east: !!incomingConf.east, south: !!incomingConf.south };
-      }
-      // 対局終了画面の「新しい対局を始める」も、両家が同時に送り合うことがあるので OR で合成する
+      const keepMine = newState.phase === "round_end" && oldState && oldState.phase === "round_end";
+      const mine = keepMine ? this.roundConfirmations || {} : {};
+      this.roundConfirmations = { east: !!(incomingConf.east || mine.east), south: !!(incomingConf.south || mine.south) };
       const incomingVotes = g.rematchVotes || { east: false, south: false };
-      if (newState.phase === "game_end" && oldState && oldState.phase === "game_end") {
-        const mineV = this.rematchVotes || {};
-        this.rematchVotes = { east: !!(incomingVotes.east || mineV.east), south: !!(incomingVotes.south || mineV.south) };
-      } else {
-        this.rematchVotes = { east: !!incomingVotes.east, south: !!incomingVotes.south };
-      }
+      const keepVotes = newState.phase === "game_end" && oldState && oldState.phase === "game_end";
+      const mineV = keepVotes ? this.rematchVotes || {} : {};
+      this.rematchVotes = { east: !!(incomingVotes.east || mineV.east), south: !!(incomingVotes.south || mineV.south) };
       if (this._destroyed) return;
       this.render();
-      // 次局送りの担当(ホスト)は、相手の確認が届いた時点で揃っていれば進める
-      this.maybeAdvanceRound();
-      this.maybeStartRematch();
     };
 
     // 相手がちょうど1回、手出しを行ったという変化であれば、この受信側でも
     // 「相手視点にヒントする一瞬の空白」を再生してから、実際の新しい状態を反映する。
-    const tedashi = this._tedashiTimer ? null : this.detectTedashiDiscard(oldState, newState);
+    const tedashi = this._tedashiTimer ? null : this.detectTedashiDiscard(oldState, newState, g.lastAction);
     if (tedashi) {
       this._tedashiGap = { seat: tedashi.seat, index: Math.floor(Math.random() * tedashi.oldHandLength) };
       this.render();
@@ -409,14 +355,8 @@ class OnlineMahjongApp extends MahjongApp {
   _onReconnected(doc) {
     if (this._destroyed) return;
     if (doc.names) this.playerNames = doc.names;
-    // 以前送った内容との比較を捨て、この後の変化は必ず送り直す
-    this._lastSentJson = null;
-    if (!doc.game && this.state) {
-      // サーバーに対局データが届いていなかった(開始直後に切れた等)場合は、自分の状態を送り直す
-      this._sendToNetwork();
-      this.render();
-      return;
-    }
+    // 送った操作の結果を待っていた場合も、サーバーの最新の局面に合わせ直す
+    this._awaitingVersion = null;
     if (doc.game) {
       // 手出しの空白演出の途中なら打ち切ってから反映する
       if (this._tedashiTimer) {
@@ -541,7 +481,8 @@ class OnlineMahjongApp extends MahjongApp {
       const hint = document.createElement("p");
       hint.textContent = "このコードを対戦相手に伝えてください。相手が参加すると自動的に対局が始まります。";
       wrap.appendChild(hint);
-      if (this.mySeat === this.hostSeat) {
+      if (this.mySeat === "east") {
+        // ルームの作成者(east 席)にだけ、自分で決めた設定を表示する
         const tc = document.createElement("p");
         tc.className = "lobby-peer-status";
         tc.textContent = `持ち時間: ${timeControlLabel(this.timeControl)}`;
@@ -599,7 +540,7 @@ class OnlineMahjongApp extends MahjongApp {
  */
 class SpectatorMahjongApp extends OnlineMahjongApp {
   constructor(root, { roomController, onExit }) {
-    super(root, { roomController, mySeat: "east", hostSeat: "east", onExit, isMatch: false });
+    super(root, { roomController, mySeat: "east", onExit, isMatch: false });
     this.isSpectator = true;
   }
 
@@ -610,11 +551,6 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
   // 観戦者は何も操作しない(打牌・鳴き・次局送り・自動進行・持ち時間の計測もしない)
   canAct() {
     return false;
-  }
-
-  // 対局を始めるのは対局者(ホスト)だけ。観戦者の画面が東家=ホスト扱いで始めてしまわないように。
-  startGameAsHost() {
-    this._renderWaitingScreen();
   }
 
   // 両者の手牌を公開する

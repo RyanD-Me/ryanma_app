@@ -3,12 +3,12 @@
 /**
  * オンライン対戦(自前サーバー方式)の本体。
  *
- * 麻雀のルールは一切知らない、ごく薄い中継サーバー。
+ * オンライン対戦のサーバー。対局の進行(合法手の判定・牌山・点数)はサーバーが持つ(gameSession.js)。
  * - クライアントが { type: "create" } を送るとルームを作り、コードを返す。
  * - もう一方が { type: "join", code } を送ると着席し、両者に { type: "ready" } を送る。
- * - 以後はどちらかが { type: "game", payload } を送るたびに、もう一方へそのまま転送するだけ。
- * - 実際のゲーム進行判断(誰が今送信してよいか等)はすべてクライアント側
- *   (online-shared.js の OnlineMahjongApp)が行う。
+ * - 両者が揃うとサーバーが対局を始め、各自に見てよい情報だけの { type: "game", payload } を配る。
+ * - クライアントは { type: "action", action } で操作を送り、サーバーが合法なものだけを反映する
+ *   (相手の手牌・牌山はクライアントに届かない)。
  * - 接続が切れても座席は一定時間(5分)予約され、{ type: "rejoin", code, token } で同じ座席に
  *   戻れる(詳細は roomRegistry.js)。
  * - 応答の無くなった接続(スマホの電波切れ等で close が届かないもの)は、WebSocket の
@@ -40,7 +40,16 @@ const httpServer = http.createServer((req, res) => {
   res.end(`二人麻雀オンライン対戦・中継サーバー稼働中(現在のルーム数: ${registry.roomCount()})\n`);
 });
 
-const wss = new WebSocketServer({ server: httpServer });
+/**
+ * 1メッセージの最大サイズ(バイト)。対局データ一式でも数十KB程度なので、これを超えるものは
+ * 改造したクライアント等からの異常なデータとして受け付けない(ws が接続を切る)。
+ */
+const MAX_MESSAGE_BYTES = 512 * 1024;
+/** 1接続が RATE_WINDOW_MS の間に送ってよいメッセージ数。超えたら接続を切る(大量送信でサーバーを止められないように) */
+const RATE_WINDOW_MS = 10000;
+const RATE_MAX_MESSAGES = 300;
+
+const wss = new WebSocketServer({ server: httpServer, maxPayload: MAX_MESSAGE_BYTES });
 
 /** WebSocket レベルの生存確認の間隔(ミリ秒)。この間に pong が返らなければ切断扱いにする。 */
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -73,7 +82,19 @@ wss.on("connection", (ws) => {
     ws.isAlive = true;
   });
 
+  let windowStart = Date.now();
+  let windowCount = 0;
   ws.on("message", (raw) => {
+    const now = Date.now();
+    if (now - windowStart > RATE_WINDOW_MS) {
+      windowStart = now;
+      windowCount = 0;
+    }
+    if (++windowCount > RATE_MAX_MESSAGES) {
+      conn.send({ type: "error", message: "送信が多すぎるため接続を切りました。" });
+      ws.terminate();
+      return;
+    }
     let msg;
     try {
       msg = JSON.parse(raw.toString());

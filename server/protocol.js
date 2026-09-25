@@ -10,13 +10,22 @@ const { RoomRegistry } = require("./roomRegistry");
  * server.js(実運用)とテスト(server/protocol.test.js)の両方が全く同じこの関数を使うことで、
  * 「サーバーが実際に実行するのと同じロジック」をテストできるようにしている。
  *
+ * 対局はサーバーが進める(gameSession.js)。クライアントは操作(action)を送り、サーバーは合法な操作だけを
+ * 反映して、各座席・観戦者にそれぞれが見てよい情報だけの対局データ(game {payload})を配る。
+ * create/join/rejoin/match には protocol: 2 を付ける(付いていない古いアプリは受け付けない)。
+ *
  * メッセージ一覧(クライアント → サーバー):
- *   create {name, allowSpectate} ルーム作成 → created {code, seat, token}
- *                                           (allowSpectate: 観戦を許可するか。省略時は許可)
- *   join   {code, name}       参加       → joined {code, seat, token}(両者揃えば両方に ready {names})
+ *   create {name, allowSpectate, timeControl, dealerChoice} ルーム作成 → created {code, seat, token, protocol}
+ *                                           (allowSpectate: 観戦を許可するか。省略時は許可。
+ *                                            timeControl: {perAction, bank}(秒)か null。dealerChoice: 起家
+ *                                            "self"(作成者)| "opponent" | "random")
+ *   join   {code, name}       参加       → joined {code, seat, token, protocol}
+ *                                           (両者揃えば両方に ready {names}、続けて最初の game)
  *   rejoin {code, token}      再接続     → rejoined {code, seat, token, names, game, peerConnected}
  *                                           (相手には peer-online)
- *   game   {payload}          対局データ → 相手に game {payload}(相手が切断中でもサーバーに保持)
+ *   action {action}           操作       → 反映されれば全員に game {payload}。合法でなければ本人に
+ *                                           action-rejected {message} と今の game {payload}
+ *                                           (action の形は gameSession.js の apply() を参照)
  *   leave                     退出       → 相手に peer-left、ルーム破棄
  *   match  {name, clientId}   自動マッチング → 相手がいなければ match-waiting、
  *                                           揃えば両者に matched {code, seat, token} と ready {names}
@@ -60,9 +69,29 @@ function normalizeClientId(raw) {
   return trimmed.slice(0, 100);
 }
 
+/** 対応しているクライアントの通信方式の版。これより古いアプリ(対局データを自分で送る方式)は受け付けない */
+const PROTOCOL_VERSION = 2;
+const OUTDATED_CLIENT_MESSAGE = "アプリが古いため接続できません。ページを再読み込みしてください。";
+
+function isCurrentClient(msg) {
+  return Number.isInteger(msg.protocol) && msg.protocol >= PROTOCOL_VERSION;
+}
+
+/** 持ち時間の設定({perAction, bank} か null)。不正値は undefined(=既定の持ち時間) */
+function normalizeTimeControl(raw) {
+  if (raw === null) return null;
+  if (raw && Number.isInteger(raw.perAction) && Number.isInteger(raw.bank)) return { perAction: raw.perAction, bank: raw.bank };
+  return undefined;
+}
+
 function handleClientMessage(registry, conn, msg) {
   if (!msg || typeof msg.type !== "string") {
     conn.send({ type: "error", message: "不正なメッセージ形式です。" });
+    return;
+  }
+
+  if (["create", "join", "rejoin", "match"].includes(msg.type) && !isCurrentClient(msg)) {
+    conn.send({ type: msg.type === "rejoin" ? "rejoin-failed" : "error", message: OUTDATED_CLIENT_MESSAGE });
     return;
   }
 
@@ -111,8 +140,12 @@ function handleClientMessage(registry, conn, msg) {
       return;
     }
     const name = normalizePlayerName(msg.name);
-    const { code, token } = registry.createRoom(conn, name, { allowSpectate: msg.allowSpectate !== false });
-    conn.send({ type: "created", code, seat: "east", token });
+    const { code, token } = registry.createRoom(conn, name, {
+      allowSpectate: msg.allowSpectate !== false,
+      timeControl: normalizeTimeControl(msg.timeControl),
+      dealerChoice: ["self", "opponent", "random"].includes(msg.dealerChoice) ? msg.dealerChoice : "self",
+    });
+    conn.send({ type: "created", code, seat: "east", token, protocol: PROTOCOL_VERSION });
     return;
   }
 
@@ -129,12 +162,13 @@ function handleClientMessage(registry, conn, msg) {
     const name = normalizePlayerName(msg.name);
     try {
       const { seat, token } = registry.joinRoom(code, conn, name);
-      conn.send({ type: "joined", code, seat, token });
+      conn.send({ type: "joined", code, seat, token, protocol: PROTOCOL_VERSION });
       if (registry.isFull(code)) {
         const peer = registry.peerOf(conn);
         const names = registry.namesFor(code);
         conn.send({ type: "ready", names });
         if (peer) peer.send({ type: "ready", names });
+        registry.startGameIfReady(code);
       }
     } catch (err) {
       conn.send({ type: "error", message: err.message });
@@ -152,6 +186,7 @@ function handleClientMessage(registry, conn, msg) {
       const result = registry.rejoinRoom(code, msg.token, conn);
       conn.send({
         type: "rejoined",
+        protocol: PROTOCOL_VERSION,
         code,
         seat: result.seat,
         token: msg.token,
@@ -179,11 +214,12 @@ function handleClientMessage(registry, conn, msg) {
     }
     const names = registry.namesFor(result.code);
     for (const p of result.players) {
-      p.conn.send({ type: "matched", code: result.code, seat: p.seat, token: p.token });
+      p.conn.send({ type: "matched", code: result.code, seat: p.seat, token: p.token, protocol: PROTOCOL_VERSION });
     }
     for (const p of result.players) {
       p.conn.send({ type: "ready", names });
     }
+    registry.startGameIfReady(result.code);
     return;
   }
 
@@ -193,8 +229,14 @@ function handleClientMessage(registry, conn, msg) {
     return;
   }
 
+  if (msg.type === "action") {
+    registry.applyAction(conn, msg.action);
+    return;
+  }
+
+  // 古いアプリ(対局データを自分で送る方式)からの対局データは受け付けない
   if (msg.type === "game") {
-    registry.relayGame(conn, msg.payload);
+    conn.send({ type: "error", message: OUTDATED_CLIENT_MESSAGE });
     return;
   }
 
@@ -206,4 +248,4 @@ function handleClientMessage(registry, conn, msg) {
   conn.send({ type: "error", message: `不明なメッセージ種別です: ${msg.type}` });
 }
 
-module.exports = { handleClientMessage, RoomRegistry };
+module.exports = { handleClientMessage, RoomRegistry, PROTOCOL_VERSION };
