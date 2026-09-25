@@ -313,9 +313,9 @@ h1, .round-badge, .log-title {
   0%, 100% { background-color: rgba(255, 220, 100, 0.06); box-shadow: 0 0 0 0 rgba(255, 210, 80, 0); }
   50% { background-color: rgba(230, 180, 60, 0.5); box-shadow: 0 0 16px 4px rgba(255, 200, 70, 0.75); }
 }
-@media (prefers-reduced-motion: reduce) {
-  .table-center-seat-active { animation: none; background-color: rgba(255, 230, 120, 0.2); }
-}
+/* OS の「視差効果を減らす」「アニメーションを表示しない」(prefers-reduced-motion) が
+   オンでも点滅は止めない。止めると光ったまま固まって見え、手番の表示として分かりにくいため
+   (PC はこの設定がオンになっていることが多い)。位置が動くアニメーションではないので残してよい。 */
 
 /* リーチ供託の1000点棒。実物同様、白い棒の中央に赤い丸が入った細長い棒として描く。
    本物のリーチ棒の画像があれば差し替え可能。 */
