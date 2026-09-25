@@ -1738,3 +1738,39 @@ h1, .round-badge, .log-title {
 .settings-screen .room-options-choice { flex-wrap: nowrap; align-items: flex-start; }
 .settings-screen .room-options-choice > input { flex-shrink: 0; margin-top: 0.2em; }
 .settings-screen .room-options-choice > span { min-width: 0; }
+
+/* ---------------- 牌譜(一覧・再生) ---------------- */
+.kifu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.kifu-head .btn { padding: 6px 14px; font-size: 0.85rem; }
+.kifu-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.kifu-item { flex-wrap: wrap; }
+.kifu-item .spectate-item-info { flex: 1 1 200px; }
+.kifu-item-btns { display: flex; gap: 6px; flex-shrink: 0; margin-left: auto; }
+.kifu-item-btns .btn { padding: 6px 10px; font-size: 0.8rem; white-space: nowrap; }
+.kifu-note { margin: 0; font-size: 0.72rem; opacity: 0.75; }
+.kifu-file-input { display: none; }
+.kifu-item-btns .btn:disabled,
+.replay-btn:disabled { opacity: 0.4; cursor: default; }
+.kifu-screen .lobby-error:empty { display: none; }
+
+/* 再生画面: 設定のチェックボックスの代わりに置く操作ボタン */
+.replay-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.replay-position { font-size: 0.8rem; white-space: nowrap; }
+.replay-buttons { display: flex; gap: 4px; }
+.replay-btn { padding: 4px 0; min-width: 40px; font-size: 0.85rem; line-height: 1.2; }
+.replay-play-btn { min-width: 48px; }
+.replay-slider { flex: 1 1 140px; min-width: 0; margin: 0; accent-color: var(--gold); }
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .title-row:has(~ #app .kifu-screen) { display: none; }
+  .app-shell:has(.kifu-screen) { max-width: none; padding: 8px 12px; box-sizing: border-box; }
+  .kifu-screen { padding: 10px 14px; gap: 8px; }
+  .kifu-screen .kifu-list { max-height: calc(100vh - 130px); max-height: calc(100dvh - 130px); }
+  .kifu-screen .spectate-item { padding: 6px 10px; }
+  /* 右列(幅が狭い)では、位置・ボタン・スライダーを縦に並べる */
+  .table-landscape .replay-controls { flex-direction: column; align-items: stretch; gap: 6px; }
+  .table-landscape .replay-position { font-size: 0.72rem; text-align: center; }
+  .table-landscape .replay-buttons { justify-content: space-between; gap: 3px; }
+  .table-landscape .replay-btn { min-width: 0; flex: 1 1 0; padding: 4px 0; font-size: 0.75rem; }
+  .table-landscape .replay-slider { flex: 0 0 auto; width: 100%; }
+}

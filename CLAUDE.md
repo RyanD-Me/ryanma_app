@@ -29,13 +29,14 @@ frontend/
   shell-ws.html       HTML の雛形(ここに CSS/JS/効果音を埋め込んで1ファイルにする)
   app.js              画面の本体(MahjongApp / CpuMahjongApp、効果音エンジン MahjongSound、配牌演出など)
   online-shared.js    オンライン対戦の画面(OnlineMahjongApp)と観戦画面(SpectatorMahjongApp)
+  kifu.js             牌譜の記録(KifuRecorder)・端末内の保存(KifuStore, IndexedDB)・書き出し/読み込み・再生画面(ReplayMahjongApp)
   ws.js               サーバー接続(WsRoomController / SpectatorController)とロビー・各設定画面(MahjongLobby)
   styles.css          すべてのスタイル(スマホ縦/横のメディアクエリを含む)
   sounds/             効果音・BGM(ビルド時に data URL で埋め込まれる。ファイル名=音の名前)
   sounds_original/    BGM の元ファイル(埋め込まれない。音質を戻したいとき用)
 server/               オンライン対戦の中継サーバー(Node + ws)。ルールは一切持たない
 build-bundle.js       dist/ のエンジンをブラウザ用の1ファイルに束ねる
-build-html-ws.js      shell-ws.html に CSS・エンジン・app/online-shared/ws・効果音を埋め込み frontend/index-ws.html を作る
+build-html-ws.js      shell-ws.html に CSS・エンジン・app/online-shared/kifu/ws・効果音を埋め込み frontend/index-ws.html を作る
 index.html            公開用(= frontend/index-ws.html のコピー。npm run release で作る)
 ```
 
@@ -84,7 +85,7 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   `requestAnimationFrame` で挿入後に `animationDelay = -(Date.now() % 2400)ms`)。
 
 ### ロビー・設定(`ws.js` の `MahjongLobby.mount`)
-- ロビー: [前回の対局に戻る] 自動マッチング / ルームを作成 / ルームに参加 / 観戦 / CPU対戦 / オプション / ルール確認、
+- ロビー: [前回の対局に戻る] 自動マッチング / ルームを作成 / ルームに参加 / 観戦 / CPU対戦 / 牌譜 / オプション / ルール確認、
   下(横向きは右)にプレイヤー名・サーバー・オンライン人数。
 - 既定サーバー `wss://ryanma.onrender.com`(`DEFAULT_SERVER_URL`)。
 - CPU対戦の設定(CPUの型・持ち時間・起家)、ルーム作成の設定(持ち時間・観戦の許可・起家)は共通部品 `showOptionsScreen`。
@@ -102,6 +103,18 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - 再接続: 座席トークンで5分以内なら同じ座席に戻れる。自動マッチングの自己マッチ防止に端末ID(localStorage `mahjong_ws_client_id`)。
 - 観戦: ロビー「観戦」から一覧(局・点数・観戦人数)またはルームコードで観戦。両者の手牌を公開表示、観戦者は操作不可。
   上側の手牌をタップすると視点(下側のプレイヤー)を切り替え。対局者の画面に「観戦 n人」。ルーム作成時に観戦の許可を選べる(自動マッチングは常に許可)。
+
+### 牌譜(`kifu.js`)
+- CPU対戦・オンライン対戦・観戦の対局を**自動で端末内(IndexedDB `ryanma-kifu`)に保存**する(新しい順に50件まで)。
+  `MahjongApp.render()` の最後で `this.kifuRecorder.capture(this)` を呼び、状態(state・lastWin・流局結果・lastCall・点数の増減)が
+  変わったら1コマ記録する(ツモ待ち `draw` は配牌直後以外は記録しない)。保存は1.5秒待ってまとめて、局の終わり・対局終了・退室・
+  ページを閉じる時はすぐ。再戦は別の牌譜になる。オンラインでページを読み込み直した場合は、同じルームの未完了の牌譜に続けて記録する。
+- 形式: `{format:"ryanma-kifu", v:1, …, tiles, frames:[[経過ms, 差分], …]}`。牌は "~牌ID" に圧縮し、各コマは直前との差分
+  (`$` 置換 / `$d` 削除 / `$a` 末尾追加 / `$s` 先頭削除)。8局で数百KB程度。書き出したファイルも同じ形式。
+- ロビー「牌譜」: 一覧(日時・種類・結果)から 再生 / ファイルに保存(JSON のダウンロード) / 削除、「ファイルを読み込む」で読み込み→再生。
+- 再生画面は対局画面と同じ描画(`ReplayMahjongApp extends MahjongApp`、操作・自動進行・配牌演出・持ち時間なし)。両者の手牌を公開、
+  上側の手牌タップで視点切り替え。操作は トグル欄の位置に ⏮前の局 ◀ ▶▶自動再生 ▶ ⏭次の局 とスライダー(PC は←→↑↓キー)。
+- **オンライン対戦の対局中(未終局で最終更新から15分以内)の牌譜は再生・書き出しできない**(相手の手牌が見えてしまうため)。
 
 ### 配牌の演出(`app.js` の `updateDealAnimation` ほか)
 - 局の始めは手牌なし → 0.3秒ごとに親→子の交互に 4,4,4,1 枚ずつ配られた順に表示(毎回 `dahai1` の音)

@@ -62,6 +62,10 @@ class OnlineMahjongApp extends MahjongApp {
     // ロビー側のデフォルト名(Player1/Player2)と同じ規則にしておく。
     this.playerNames = { east: "Player1", south: "Player2" };
 
+    /** 牌譜の記録(kifu.js)。観戦画面では mode が "spectate" になる */
+    this.kifuRecorder =
+      typeof KifuRecorder === "function" ? new KifuRecorder({ mode: this.kifuMode(), roomCode: roomController.code || null }) : null;
+
     /** 対局を続けられなくなった理由(相手の退出・再接続の失敗)。null なら続行中 */
     this.connectionEndedMessage = null;
 
@@ -120,8 +124,14 @@ class OnlineMahjongApp extends MahjongApp {
     });
   }
 
+  /** 牌譜の種類 */
+  kifuMode() {
+    return "online";
+  }
+
   destroy() {
     this._destroyed = true;
+    if (this.kifuRecorder) this.kifuRecorder.stop();
     this.clearResultTimers();
     this.stopTurnTimer();
     for (const key of ["_autoTsumogiriTimer", "_autoWinTimer", "_winBannerTimer", "_callBannerTimer", "_exhaustiveDrawTimer"]) {
@@ -591,6 +601,10 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
   constructor(root, { roomController, onExit }) {
     super(root, { roomController, mySeat: "east", hostSeat: "east", onExit, isMatch: false });
     this.isSpectator = true;
+  }
+
+  kifuMode() {
+    return "spectate";
   }
 
   // 観戦者は何も操作しない(打牌・鳴き・次局送り・自動進行・持ち時間の計測もしない)

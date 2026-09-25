@@ -1394,6 +1394,7 @@ const MahjongLobby = (function () {
       menuBtn("観戦", showSpectateList);
       // CPU対戦は画面上側(相手側)をCPUが操作する。開始前にCPU・持ち時間・起家を選ぶ
       menuBtn("CPU対戦", showTestPlayOptions);
+      menuBtn("牌譜", showKifuList);
       menuBtn("オプション", showSettings);
       menuBtn("ルール確認", showRules);
 
@@ -1903,6 +1904,147 @@ const MahjongLobby = (function () {
         }
         load();
       }, 15000);
+    }
+
+    /**
+     * 「牌譜」: 端末内に自動保存した対局の一覧。再生・ファイルに書き出し・削除と、
+     * 書き出したファイルの読み込みができる(kifu.js)。
+     */
+    function showKifuList() {
+      root.innerHTML = "";
+      const wrap = el("div", { className: "lobby room-options kifu-screen" });
+      const head = el("div", { className: "kifu-head" });
+      head.appendChild(el("h2", { className: "room-options-title", textContent: "牌譜" }));
+      const headBtns = el("div", { className: "lobby-join-row" });
+      const importBtn = el("button", { type: "button", className: "btn", textContent: "ファイルを読み込む" });
+      const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
+      headBtns.appendChild(importBtn);
+      headBtns.appendChild(backBtn);
+      head.appendChild(headBtns);
+      wrap.appendChild(head);
+      const errorP = el("p", { className: "lobby-error" });
+      wrap.appendChild(errorP);
+      const listBox = el("div", { className: "kifu-list" });
+      listBox.appendChild(el("p", { className: "spectate-status", textContent: "読み込んでいます…" }));
+      wrap.appendChild(listBox);
+      wrap.appendChild(
+        el("p", {
+          className: "kifu-note",
+          textContent: `対局の牌譜はこの端末に自動で保存されます(新しいものから${KIFU_MAX_RECORDS}件まで)。ブラウザのデータを消すと消えるので、残したい牌譜は「ファイルに保存」してください。`,
+        })
+      );
+      root.appendChild(wrap);
+      backBtn.addEventListener("click", showLobby);
+
+      // ファイルの読み込み: 一覧に追加して、そのまま再生する
+      const fileInput = el("input", { type: "file", accept: ".json,application/json", className: "kifu-file-input" });
+      wrap.appendChild(fileInput);
+      importBtn.addEventListener("click", () => fileInput.click());
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = "";
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          let record;
+          try {
+            record = kifuParseFile(String(reader.result));
+          } catch (err) {
+            errorP.textContent = err.message;
+            return;
+          }
+          record.imported = true;
+          // 再生中の対局扱い(ロック)にならないよう、読み込んだ牌譜は対局中とみなさない
+          if (!record.finished) record.updatedAt = 0;
+          KifuStore.put(record)
+            .catch(() => {})
+            .then(() => startReplay(record));
+        };
+        reader.onerror = () => (errorP.textContent = "ファイルを読み込めませんでした。");
+        reader.readAsText(file);
+      });
+
+      const fmtDate = (ms) => {
+        const d = new Date(ms);
+        const p = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      };
+      const windName = { east: "東", south: "南", west: "西", north: "北" };
+      const render = (rows) => {
+        listBox.innerHTML = "";
+        if (rows.length === 0) {
+          listBox.appendChild(el("p", { className: "spectate-status", textContent: "保存された牌譜はまだありません。" }));
+          return;
+        }
+        for (const r of rows) {
+          const item = el("div", { className: "spectate-item kifu-item" });
+          const info = el("div", { className: "spectate-item-info" });
+          const names = r.names || {};
+          const sum = r.summary;
+          const scoreText = sum && sum.scores ? `${formatScore(sum.scores.east)} / ${formatScore(sum.scores.south)}` : "";
+          info.appendChild(
+            el("p", {
+              className: "spectate-item-names",
+              textContent: `${names.east || "Player1"} vs ${names.south || "Player2"}`,
+            })
+          );
+          const locked = kifuIsLocked(r);
+          const state = locked
+            ? "対局中"
+            : r.finished
+              ? sum && sum.endReason === "bust"
+                ? "トビ終了"
+                : "終局"
+              : sum
+                ? `${windName[sum.roundWind] || ""}${sum.roundNumber}局まで`
+                : "";
+          const meta = [fmtDate(r.startedAt), kifuModeLabel(r.mode) + (r.partial ? "(途中から)" : ""), state, scoreText]
+            .filter(Boolean)
+            .join("　");
+          info.appendChild(el("p", { className: "spectate-item-meta", textContent: meta }));
+          item.appendChild(info);
+          const btns = el("div", { className: "kifu-item-btns" });
+          const playBtn = el("button", { type: "button", className: "btn btn-primary", textContent: "再生" });
+          playBtn.disabled = locked;
+          if (locked) playBtn.title = "対局中の牌譜は、対局が終わってから再生できます";
+          playBtn.addEventListener("click", () => startReplay(r));
+          const saveBtn = el("button", { type: "button", className: "btn", textContent: "ファイルに保存" });
+          saveBtn.disabled = locked;
+          saveBtn.addEventListener("click", () => kifuExportFile(r));
+          const delBtn = el("button", { type: "button", className: "btn", textContent: "削除" });
+          delBtn.addEventListener("click", () => {
+            if (!window.confirm("この牌譜を削除しますか？")) return;
+            KifuStore.remove(r.id)
+              .catch(() => {})
+              .then(load);
+          });
+          btns.appendChild(playBtn);
+          btns.appendChild(saveBtn);
+          btns.appendChild(delBtn);
+          item.appendChild(btns);
+          listBox.appendChild(item);
+        }
+      };
+      const load = () =>
+        KifuStore.list()
+          .then((rows) => {
+            if (wrap.isConnected) render(rows);
+          })
+          .catch((err) => {
+            if (!wrap.isConnected) return;
+            listBox.innerHTML = "";
+            listBox.appendChild(el("p", { className: "lobby-error", textContent: (err && err.message) || String(err) }));
+          });
+      load();
+    }
+
+    function startReplay(record) {
+      root.innerHTML = "";
+      try {
+        currentApp = new ReplayMahjongApp(root, { record, onExit: showKifuList });
+      } catch (err) {
+        showError("牌譜を再生できませんでした。" + ((err && err.message) || ""));
+      }
     }
 
     async function startSpectate(serverUrl, code) {
