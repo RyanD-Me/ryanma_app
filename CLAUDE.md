@@ -29,7 +29,7 @@ frontend/
   shell-ws.html       HTML の雛形(ここに CSS/JS/効果音を埋め込んで1ファイルにする)
   app.js              画面の本体(MahjongApp / CpuMahjongApp、効果音エンジン MahjongSound、配牌演出など)
   online-shared.js    オンライン対戦の画面(OnlineMahjongApp)と観戦画面(SpectatorMahjongApp)
-  kifu.js             牌譜の記録(KifuRecorder)・端末内の保存(KifuStore, IndexedDB)・書き出し/読み込み・再生画面(ReplayMahjongApp)
+  kifu.js             牌譜の記録(KifuRecorder・記録するかの設定 loadKifuSettings)・端末内の保存(KifuStore, IndexedDB)・書き出し/読み込み・再生画面(ReplayMahjongApp)
   ws.js               サーバー接続(WsRoomController / SpectatorController)とロビー・各設定画面(MahjongLobby)
   styles.css          すべてのスタイル(スマホ縦/横のメディアクエリを含む)
   sounds/             効果音・BGM(ビルド時に data URL で埋め込まれる。ファイル名=音の名前)
@@ -157,7 +157,10 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   上側の手牌をタップすると視点(下側のプレイヤー)を切り替え。対局者の画面に「観戦 n人」。ルーム作成時に観戦の許可を選べる(自動マッチングは常に許可)。
 
 ### 牌譜(`kifu.js`)
-- CPU対戦・オンライン対戦・観戦の対局を**自動で端末内(IndexedDB `ryanma-kifu`)に保存**する(新しい順に50件まで)。
+- CPU対戦・オンライン対戦の対局を**自動で端末内(IndexedDB `ryanma-kifu`)に保存**する(新しい順に50件まで)。**観戦は記録しない**。
+  オプション画面「牌譜を残す」で オンライン対戦 / CPU対戦 ごとに記録するかを選べる(localStorage `mahjong_kifu_settings`
+  `{online, cpu}`、既定はどちらも残す。対局の開始時に `kifuRecordingEnabled(mode)` で確かめ、オフなら `kifuRecorder` を作らない)。
+  mode `"spectate"` は以前に保存した観戦の牌譜・読み込んだファイルの表示用に残している。
   `MahjongApp.render()` の最後で `this.kifuRecorder.capture(this)` を呼び、状態(state・lastWin・流局結果・lastCall・点数の増減)が
   変わったら1コマ記録する(ツモ待ち `draw` は配牌直後以外は記録しない)。保存は1.5秒待ってまとめて、局の終わり・対局終了・退室・
   ページを閉じる時はすぐ。再戦は別の牌譜になる。オンラインでページを読み込み直した場合は、同じルームの未完了の牌譜に続けて記録する。
