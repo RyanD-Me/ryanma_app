@@ -24,6 +24,10 @@
  * 始まっていれば一覧に載り、ルームコードでも観戦できる。観戦者には両者の手牌を見せた対局データを
  * 配る(牌山は伏せる。観戦者からの操作は受け付けない)。観戦者数が変わるたびに、対局者と観戦者の
  * 全員へ人数を知らせる。
+ * 観戦者への対局データは **3分遅れ(SPECTATOR_DELAY_MS)** で配る。観戦者が対局者に手牌を教える
+ * (観戦を使った覗き見)ことができないよう、遅らせるのはサーバー側で行う(観戦者のブラウザには、
+ * 3分より新しい局面はそもそも届かない)。一覧に出す局・点数も3分遅れのもの。対局が終わった後も、
+ * 観戦者には残りの3分ぶんを配り終えてから終了を知らせる。
  */
 
 const crypto = require("crypto");
@@ -34,6 +38,8 @@ const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 const ROOM_CODE_LENGTH = 6;
 /** 切断後、同じ座席に戻ってこられる猶予時間(ミリ秒) */
 const DEFAULT_RECONNECT_GRACE_MS = 5 * 60 * 1000;
+/** 観戦者に対局データを配るまでの遅れ(ミリ秒) */
+const SPECTATOR_DELAY_MS = 3 * 60 * 1000;
 
 const SEATS = ["east", "south"];
 
@@ -51,6 +57,18 @@ function randomToken() {
 
 function otherSeat(seat) {
   return seat === "east" ? "south" : "east";
+}
+
+/** 観戦一覧用に、観戦者向けの対局データから局と点数だけを抜き出す(無ければ null) */
+function summarizeView(view) {
+  const s = view && view.state;
+  if (!s) return null;
+  return {
+    roundWind: s.roundWind,
+    roundNumber: s.roundNumber,
+    scores: { east: s.players.east.score, south: s.players.south.score },
+    ended: s.phase === "game_end",
+  };
 }
 
 function safeSend(conn, obj) {
@@ -71,6 +89,8 @@ class RoomRegistry {
   constructor(options = {}) {
     this.random = options.random || Math.random;
     this.graceMs = options.graceMs != null ? options.graceMs : DEFAULT_RECONNECT_GRACE_MS;
+    this.spectatorDelayMs = options.spectatorDelayMs != null ? options.spectatorDelayMs : SPECTATOR_DELAY_MS;
+    this.now = options.now || (() => Date.now());
     // 実際のタイマーは unref する(サーバーの待ち受けが続いている間は普通に動く。テストでは終了を妨げない)
     this.setTimer =
       options.setTimer ||
@@ -91,6 +111,8 @@ class RoomRegistry {
      *   graceTimers: {east, south} 切断中の座席の猶予タイマー
      *   allowSpectate: 観戦を許可するか
      *   spectators: Set<conn> 観戦中の接続
+     *   spectatorFeed: [{at, view}] 観戦者にまだ配っていない(遅らせている)対局データ
+     *   delayedView: 観戦者に配った最新の対局データ(遅らせた後のもの。まだ無ければ null)
      * }
      */
     this.rooms = new Map();
@@ -106,6 +128,8 @@ class RoomRegistry {
     this.matchQueue = [];
     /** 観戦中の conn -> code の逆引き */
     this.spectatorInfo = new Map();
+    /** 対局は終わったが、観戦者に遅れて配る分がまだ残っているルーム(code -> room) */
+    this.closingRooms = new Map();
   }
 
   // ---------------- 自動マッチング ----------------
@@ -185,6 +209,8 @@ class RoomRegistry {
       createdAt: Date.now(),
       allowSpectate: options.allowSpectate !== false,
       spectators: new Set(),
+      spectatorFeed: [],
+      delayedView: null,
     });
     this.connInfo.set(conn, { code, seat: "east" });
     return { code, token };
@@ -233,15 +259,39 @@ class RoomRegistry {
     this._broadcastGame(code);
   }
 
-  /** そのルームの対局データを、各座席(その座席向け)と観戦者(観戦者向け)に配る */
+  /** そのルームの対局データを、各座席(その座席向け)にはすぐ、観戦者には遅らせて配る */
   _broadcastGame(code) {
     const room = this.rooms.get(code);
     if (!room || !room.session) return;
     for (const s of SEATS) safeSend(room.conns[s], { type: "game", payload: room.session.viewFor(s) });
-    if (room.spectators.size > 0) {
-      const view = room.session.viewFor(null);
-      for (const sp of room.spectators) safeSend(sp, { type: "game", payload: view });
+    this._queueSpectatorView(room);
+  }
+
+  /** 観戦者向けの対局データを、SPECTATOR_DELAY_MS 後に配るよう予約する(観戦者がいなくても、途中から来た人のために貯める) */
+  _queueSpectatorView(room) {
+    if (!room.allowSpectate) return;
+    const entry = { at: this.now(), view: room.session.viewFor(null) };
+    room.spectatorFeed.push(entry);
+    if (this.spectatorDelayMs <= 0) {
+      this._releaseSpectatorView(room, entry);
+      return;
     }
+    this.setTimer(() => this._releaseSpectatorView(room, entry), this.spectatorDelayMs);
+  }
+
+  /** 遅らせていた対局データを観戦者に配る */
+  _releaseSpectatorView(room, entry) {
+    const i = room.spectatorFeed.indexOf(entry);
+    if (i < 0) return;
+    room.spectatorFeed.splice(0, i + 1);
+    room.delayedView = entry.view;
+    for (const sp of room.spectators) safeSend(sp, { type: "game", payload: entry.view });
+  }
+
+  /** 観戦者に最初の対局データが届くまでの残り時間(ミリ秒)。既に届いていれば 0 */
+  _spectateStartsInMs(room) {
+    if (room.delayedView || room.spectatorFeed.length === 0) return 0;
+    return Math.max(0, room.spectatorFeed[0].at + this.spectatorDelayMs - this.now());
   }
 
   /**
@@ -412,11 +462,21 @@ class RoomRegistry {
   _deleteRoom(code) {
     const room = this.rooms.get(code);
     if (!room) return;
-    for (const sp of room.spectators) {
-      this.spectatorInfo.delete(sp);
-      safeSend(sp, { type: "spectate-ended", message: "対局が終了しました。" });
+    const endSpectating = () => {
+      this.closingRooms.delete(code);
+      for (const sp of room.spectators) {
+        this.spectatorInfo.delete(sp);
+        safeSend(sp, { type: "spectate-ended", message: "対局が終了しました。" });
+      }
+      room.spectators.clear();
+    };
+    // 観戦者には遅らせている分(最大 SPECTATOR_DELAY_MS)を配り終えてから終了を知らせる
+    if (room.spectators.size > 0 && room.spectatorFeed.length > 0 && this.spectatorDelayMs > 0) {
+      this.closingRooms.set(code, room);
+      this.setTimer(endSpectating, this.spectatorDelayMs);
+    } else {
+      endSpectating();
     }
-    room.spectators.clear();
     if (room.session) room.session.destroy();
     for (const s of SEATS) {
       if (room.graceTimers[s]) this.clearTimer(room.graceTimers[s]);
@@ -452,7 +512,8 @@ class RoomRegistry {
         code: room.code,
         names: this.namesFor(room.code),
         spectators: room.spectators.size,
-        round: room.session.summary(),
+        // 局・点数も観戦と同じく遅らせたもの(まだ無ければ null =「対局中」)
+        round: summarizeView(room.delayedView),
       });
     }
     list.sort((a, b) => this.rooms.get(a.code).createdAt - this.rooms.get(b.code).createdAt);
@@ -461,7 +522,8 @@ class RoomRegistry {
 
   /**
    * 観戦を始める。
-   * @returns {{names: object, lastGame: any, spectators: number}}
+   * @returns {{names: object, lastGame: any, spectators: number, delayMs: number, startsInMs: number}}
+   *   lastGame は遅らせた後の最新の対局データ(対局開始から SPECTATOR_DELAY_MS 経つまでは null)
    * @throws {Error} ルームが無い/観戦不可の場合(message はそのまま利用者向けに表示してよい文言)
    */
   spectate(code, conn) {
@@ -475,7 +537,13 @@ class RoomRegistry {
     room.spectators.add(conn);
     this.spectatorInfo.set(conn, code);
     this._broadcastSpectatorCount(room);
-    return { names: this.namesFor(code), lastGame: room.session.viewFor(null), spectators: room.spectators.size };
+    return {
+      names: this.namesFor(code),
+      lastGame: room.delayedView,
+      spectators: room.spectators.size,
+      delayMs: this.spectatorDelayMs,
+      startsInMs: this._spectateStartsInMs(room),
+    };
   }
 
   /** 観戦をやめる(観戦していなければ何もしない)。 */
@@ -483,10 +551,10 @@ class RoomRegistry {
     const code = this.spectatorInfo.get(conn);
     if (!code) return;
     this.spectatorInfo.delete(conn);
-    const room = this.rooms.get(code);
+    const room = this.rooms.get(code) || this.closingRooms.get(code);
     if (!room) return;
     room.spectators.delete(conn);
-    this._broadcastSpectatorCount(room);
+    if (this.rooms.has(code)) this._broadcastSpectatorCount(room);
   }
 
   /** そのルームの観戦者数(ルームが無ければ 0)。 */
@@ -508,4 +576,4 @@ class RoomRegistry {
   }
 }
 
-module.exports = { RoomRegistry, randomRoomCode, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS };
+module.exports = { RoomRegistry, randomRoomCode, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS, SPECTATOR_DELAY_MS };
