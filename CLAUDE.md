@@ -89,7 +89,9 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - スマホ横向きの判定は `(max-height: 480px) and (orientation: landscape)`(CSS・`LANDSCAPE_PHONE_MQ`・shell-ws.html で共通)。
 - 横向きで画面の高さに収まらない画面は、`shell-ws.html` のスクリプトが `.app-shell` を transform で縮小する(最後の手段)。
   **ロビー・オプション・CPU対戦/ルームの設定画面・対局画面には横向き専用レイアウトがあり、縮小されない**
-  (`.lobby-main`、`.options-screen`(`.settings-screen`)、`.table-landscape`)。新しい画面を作るときも横向きで縮小されないようにする。
+  (`.lobby-main`、`.options-screen`(`.settings-screen`)、`.table-landscape`)。
+  ルール確認(`.rules-view`)は文面(`.rules-scroll`)だけをスクロールし、戻るボタンは常に下側(画面の高さに合わせる。
+  PC の拡大は `applyBoardScale` が入れる `--shell-zoom` で割り戻す)。新しい画面を作るときも横向きで縮小されないようにする。
   確認は `document.documentElement.scrollHeight === innerHeight` かつ `.app-shell` の transform が空。
 - CSS アニメーションは再描画で頭からやり直しにならないよう、位相を時計に合わせる(手番の点滅 `turn-glow` は
   `requestAnimationFrame` で挿入後に `animationDelay = -(Date.now() % 2400)ms`)。

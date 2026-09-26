@@ -4028,6 +4028,7 @@ function applyBoardScale() {
   const height = window.innerHeight;
   if (width < BOARD_SCALE_MIN_WIDTH) {
     shell.style.zoom = "";
+    shell.style.setProperty("--shell-zoom", "1");
     return;
   }
   // PC の対局画面は、卓を広げたときの基準サイズで拡大率を決める
@@ -4041,6 +4042,8 @@ function applyBoardScale() {
   // 1倍未満(縦に短い横向きスマートフォンなど)では拡大も縮小もしない
   const zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
   if (shell.style.zoom !== zoom) shell.style.zoom = zoom;
+  // 画面の高さに合わせる要素(ルール確認など)が、拡大した分を割り戻して高さを決められるようにする
+  shell.style.setProperty("--shell-zoom", zoom || "1");
 }
 
 window.addEventListener("resize", applyBoardScale);

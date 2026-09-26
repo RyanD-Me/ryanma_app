@@ -1478,7 +1478,28 @@ h1, .round-badge, .log-title {
 .room-options-hint { width: 100%; font-size: 0.75rem; opacity: 0.8; }
 
 /* ---------------- ロビー「ルール確認」画面 ---------------- */
-.rules-view { max-height: 80vh; overflow-y: auto; }
+/* ルール確認: 文面(.rules-scroll)だけをスクロールし、画面名と戻るボタンは常に見えるようにする */
+.rules-view {
+  /* 画面の高さから上のタイトル・余白(約110px)を引いた高さ。PC で拡大(zoom)している分は割り戻す */
+  max-height: calc((100vh - 110px) / var(--shell-zoom, 1));
+  max-height: calc((100dvh - 110px) / var(--shell-zoom, 1));
+  overflow: hidden;
+}
+@media (max-height: 480px) and (orientation: landscape) {
+  /* スマホ横向き: 画面名の行を隠し、ルールの枠を画面の高さいっぱいに使う(縮小がかからないように) */
+  .title-row:has(~ #app .rules-view) { display: none; }
+  .app-shell:has(.rules-view) { padding-top: 8px; padding-bottom: 8px; }
+  .rules-view { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); padding: 12px 16px; gap: 10px; }
+}
+.rules-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rules-back-btn { flex-shrink: 0; align-self: flex-start; }
 .rules-section-title { margin: 6px 0 0; font-size: 1rem; color: var(--gold); }
 .rules-text {
   margin: 0;

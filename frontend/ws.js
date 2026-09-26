@@ -1920,13 +1920,16 @@ const MahjongLobby = (function () {
       const wrap = el("div", { className: "lobby room-options rules-view" });
       wrap.appendChild(el("h2", { className: "room-options-title", textContent: "ルール確認" }));
 
-      wrap.appendChild(el("h3", { className: "rules-section-title", textContent: "簡易ルール" }));
-      wrap.appendChild(el("pre", { className: "rules-text", textContent: SIMPLE_RULES_TEXT }));
+      // 文面だけをスクロールさせ、戻るボタンは常に下側に見えるようにする
+      const scroll = el("div", { className: "rules-scroll" });
+      scroll.appendChild(el("h3", { className: "rules-section-title", textContent: "簡易ルール" }));
+      scroll.appendChild(el("pre", { className: "rules-text", textContent: SIMPLE_RULES_TEXT }));
 
-      wrap.appendChild(el("h3", { className: "rules-section-title", textContent: "詳細ルール" }));
-      wrap.appendChild(el("pre", { className: "rules-text", textContent: DETAILED_RULES_TEXT }));
+      scroll.appendChild(el("h3", { className: "rules-section-title", textContent: "詳細ルール" }));
+      scroll.appendChild(el("pre", { className: "rules-text", textContent: DETAILED_RULES_TEXT }));
+      wrap.appendChild(scroll);
 
-      const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
+      const backBtn = el("button", { type: "button", className: "btn rules-back-btn", textContent: "戻る" });
       backBtn.addEventListener("click", showLobby);
       wrap.appendChild(backBtn);
       root.appendChild(wrap);
