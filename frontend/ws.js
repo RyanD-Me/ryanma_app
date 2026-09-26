@@ -363,7 +363,7 @@ class WsRoomController {
     try {
       ws = new WebSocket(this.serverUrl);
     } catch (e) {
-      this._onSocketLost(gen, "サーバーURLが不正です: " + ((e && e.message) || e));
+      this._onSocketLost(gen, "サーバーに接続できませんでした: " + ((e && e.message) || e));
       return;
     }
     this.ws = ws;
@@ -829,7 +829,7 @@ function fetchSpectatableGames(serverUrl) {
       ws = new WebSocket(serverUrl);
     } catch (e) {
       clearTimeout(timer);
-      reject(new Error("サーバーURLが不正です: " + ((e && e.message) || e)));
+      reject(new Error("サーバーに接続できませんでした: " + ((e && e.message) || e)));
       return;
     }
     ws.addEventListener("open", () => ws.send(JSON.stringify({ type: "list-games" })));
@@ -916,7 +916,7 @@ class SpectatorController {
     try {
       ws = new WebSocket(this.serverUrl);
     } catch (e) {
-      this._onSocketLost(gen, "サーバーURLが不正です: " + ((e && e.message) || e));
+      this._onSocketLost(gen, "サーバーに接続できませんでした: " + ((e && e.message) || e));
       return;
     }
     this.ws = ws;
@@ -1093,7 +1093,7 @@ class SpectatorController {
   }
 }
 
-// ---------------- ロビー(ローカル/オンラインの選択画面 + サーバーURL・ルームコード入力) ----------------
+// ---------------- ロビー(メニュー・各設定画面・ルームコード入力) ----------------
 
 const MahjongLobby = (function () {
   const SERVER_URL_STORAGE_KEY = "mahjong_ws_server_url";
@@ -1223,22 +1223,22 @@ const MahjongLobby = (function () {
     return e;
   }
 
-  /** 既定の中継サーバー(オプションで変更しなければこれに接続する) */
+  /** 中継サーバー(画面からは変更できない) */
   const DEFAULT_SERVER_URL = "wss://ryanma.onrender.com";
 
+  /**
+   * 接続するサーバー。常に DEFAULT_SERVER_URL(以前オプションで別のURLを保存していても使わない)。
+   * 動作確認用に、localStorage(SERVER_URL_STORAGE_KEY)に自分の端末のサーバー(ws://localhost 等)が
+   * 入っているときだけ、そちらにつなぐ。
+   */
   function loadLastServerUrl() {
     try {
-      return localStorage.getItem(SERVER_URL_STORAGE_KEY) || DEFAULT_SERVER_URL;
-    } catch (e) {
-      return DEFAULT_SERVER_URL;
-    }
-  }
-  function saveLastServerUrl(url) {
-    try {
-      localStorage.setItem(SERVER_URL_STORAGE_KEY, url);
+      const v = localStorage.getItem(SERVER_URL_STORAGE_KEY);
+      if (v && /^ws:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(v)) return v;
     } catch (e) {
       /* ignore */
     }
+    return DEFAULT_SERVER_URL;
   }
 
   function loadLastPlayerName() {
@@ -1457,7 +1457,7 @@ const MahjongLobby = (function () {
       }
 
       // メニュー: 自動マッチング / ルームを作成 / ルームに参加 / CPU対戦 / オプション
-      // (サーバーURL・プレイヤー名は「オプション」で設定する。未設定なら既定のサーバーを使う)
+      // (プレイヤー名は「オプション」で設定する。接続先は常に既定のサーバー)
       const onlineSection = el("div", { className: "lobby-online" });
       const menuBtn = (text, onClick, primary) => {
         const b = el("button", { type: "button", className: "btn" + (primary ? " btn-primary" : ""), textContent: text });
@@ -1481,13 +1481,12 @@ const MahjongLobby = (function () {
 
       wrap.appendChild(onlineSection);
 
-      // 現在のプレイヤー名とサーバーURL(変更は「オプション」から)
+      // 現在のプレイヤー名(変更は「オプション」から)とオンライン人数
       const info = el("div", { className: "lobby-current" });
       const name = loadLastPlayerName();
       info.appendChild(
         el("p", { className: "lobby-current-name", textContent: `プレイヤー名: ${name || "Player"}` })
       );
-      info.appendChild(el("p", { className: "lobby-current-server", textContent: `サーバー: ${loadLastServerUrl()}` }));
       info.appendChild(buildLobbyOnlineCountRow());
       wrap.appendChild(info);
       root.appendChild(wrap);
@@ -1812,13 +1811,13 @@ const MahjongLobby = (function () {
       codeInput.focus();
     }
 
-    /** 「オプション」: プレイヤー名の設定と、サーバーURLの確認・変更 */
+    /** 「オプション」: プレイヤー名・牌譜・音の設定 */
     function showSettings() {
       root.innerHTML = "";
       // options-screen: スマホ横向きでは CPU対戦・ルームの設定画面と同じく、欄を横に並べる配置になる
       const wrap = el("div", { className: "lobby room-options options-screen settings-screen" });
       wrap.appendChild(el("h2", { className: "room-options-title", textContent: "オプション" }));
-      // 左: プレイヤー名・サーバーURL / 右: 音
+      // 左: プレイヤー名・牌譜 / 右: 音
       const fieldsBox = el("div", { className: "options-fields" });
       const basicCol = el("div", { className: "settings-col" });
       fieldsBox.appendChild(basicCol);
@@ -1835,20 +1834,6 @@ const MahjongLobby = (function () {
       });
       nameField.appendChild(nameInput);
       basicCol.appendChild(nameField);
-
-      const urlField = el("label", { className: "settings-field" });
-      urlField.appendChild(el("span", { className: "settings-label", textContent: "サーバーURL" }));
-      const urlInput = el("input", {
-        type: "text",
-        className: "lobby-code-input lobby-server-url-input",
-        value: loadLastServerUrl(),
-      });
-      urlField.appendChild(urlInput);
-      const resetBtn = el("button", { type: "button", className: "btn settings-reset-btn", textContent: "既定のサーバーに戻す" });
-      resetBtn.addEventListener("click", () => (urlInput.value = DEFAULT_SERVER_URL));
-      urlField.appendChild(resetBtn);
-      urlField.appendChild(el("span", { className: "settings-hint", textContent: `既定: ${DEFAULT_SERVER_URL}` }));
-      basicCol.appendChild(urlField);
 
       // 牌譜を残すかどうか(オンライン対戦・CPU対戦ごと。観戦は残さない)
       const kifuSettings = typeof loadKifuSettings === "function" ? loadKifuSettings() : { online: true, cpu: true };
@@ -1917,12 +1902,6 @@ const MahjongLobby = (function () {
       const saveBtn = el("button", { type: "button", className: "btn btn-primary", textContent: "保存する" });
       const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
       saveBtn.addEventListener("click", () => {
-        const url = urlInput.value.trim();
-        if (!/^wss?:\/\/\S+$/.test(url)) {
-          msg.textContent = "サーバーURLは wss:// または ws:// から始まる形で入力してください。";
-          return;
-        }
-        saveLastServerUrl(url);
         saveLastPlayerName(nameInput.value.trim());
         if (typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
         MahjongSound.update({
@@ -2259,14 +2238,13 @@ const MahjongLobby = (function () {
 
     async function startOnline(mode, serverUrl, code, name, timeControl, roomOptions = {}) {
       if (!serverUrl) {
-        showError("サーバーURLを入力してください。");
+        showError("サーバーに接続できませんでした。");
         return;
       }
       if (typeof WebSocket === "undefined") {
         showError("このブラウザはWebSocketに対応していないため、オンライン対戦を利用できません。");
         return;
       }
-      saveLastServerUrl(serverUrl);
       saveLastPlayerName(name || "");
 
       root.innerHTML = "";
