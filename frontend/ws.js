@@ -1850,6 +1850,23 @@ const MahjongLobby = (function () {
       urlField.appendChild(el("span", { className: "settings-hint", textContent: `既定: ${DEFAULT_SERVER_URL}` }));
       basicCol.appendChild(urlField);
 
+      // 牌譜を残すかどうか(オンライン対戦・CPU対戦ごと。観戦は残さない)
+      const kifuSettings = typeof loadKifuSettings === "function" ? loadKifuSettings() : { online: true, cpu: true };
+      const kifuGroup = el("fieldset", { className: "room-options-group settings-kifu" });
+      kifuGroup.appendChild(el("legend", { textContent: "牌譜を残す" }));
+      const kifuCheckbox = (text, checked) => {
+        const label = el("label", { className: "room-options-choice" });
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = checked;
+        label.appendChild(cb);
+        label.appendChild(el("span", { textContent: " " + text }));
+        kifuGroup.appendChild(label);
+        return cb;
+      };
+      const kifuOnlineCb = kifuCheckbox("オンライン対戦", kifuSettings.online);
+      const kifuCpuCb = kifuCheckbox("CPU対戦", kifuSettings.cpu);
+      basicCol.appendChild(kifuGroup);
+
       // 効果音・発声(対局画面のスピーカーのボタンでも、すべての音をまとめて消せる)
       const sound = MahjongSound.getSettings();
       const soundGroup = el("fieldset", { className: "room-options-group" });
@@ -1907,6 +1924,7 @@ const MahjongLobby = (function () {
         }
         saveLastServerUrl(url);
         saveLastPlayerName(nameInput.value.trim());
+        if (typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
         MahjongSound.update({
           se: seCb.checked,
           voice: voiceCb.checked,

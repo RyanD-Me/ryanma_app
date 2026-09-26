@@ -3819,7 +3819,8 @@ class CpuMahjongApp extends MahjongApp {
     this._cpuTimer = null;
     this._cpuTaskKey = null;
     this._destroyed = false;
-    this.kifuRecorder = typeof KifuRecorder === "function" ? new KifuRecorder({ mode: "cpu" }) : null;
+    // 牌譜はオプション画面で「CPU対戦を残す」がオンのときだけ記録する
+    this.kifuRecorder = typeof KifuRecorder === "function" && kifuRecordingEnabled("cpu") ? new KifuRecorder({ mode: "cpu" }) : null;
     if (options.autoStart !== false) {
       this.newGame();
     }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-dNKC6peBC/lxI8LrVKWtJWeVcqPLclFskMboTZalzmE=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-Yl7Cn0e2oeX9wsD7nWIlrrbu2U2rGJVMq0NuZYcUuBc=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-gDtK/4JMAgVX/mdvGHNM3nN2yMr2a9p35jCUVT0GJpM=' 'sha256-JDI7gIXtxfAuqaxrzcNJFQJ4RHSxoasw3eb2xIl21sU=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-G/HD188u4j2S+QxgrpSi3uF/Jhw/J49P7d4s96AfAqQ=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -9203,7 +9203,8 @@ class CpuMahjongApp extends MahjongApp {
     this._cpuTimer = null;
     this._cpuTaskKey = null;
     this._destroyed = false;
-    this.kifuRecorder = typeof KifuRecorder === "function" ? new KifuRecorder({ mode: "cpu" }) : null;
+    // 牌譜はオプション画面で「CPU対戦を残す」がオンのときだけ記録する
+    this.kifuRecorder = typeof KifuRecorder === "function" && kifuRecordingEnabled("cpu") ? new KifuRecorder({ mode: "cpu" }) : null;
     if (options.autoStart !== false) {
       this.newGame();
     }
@@ -9509,9 +9510,14 @@ class OnlineMahjongApp extends MahjongApp {
     // ロビー側のデフォルト名(Player1/Player2)と同じ規則にしておく。
     this.playerNames = { east: "Player1", south: "Player2" };
 
-    /** 牌譜の記録(kifu.js)。観戦画面では mode が "spectate" になる */
+    /**
+     * 牌譜の記録(kifu.js)。オンライン対戦はオプション画面で「オンライン対戦を残す」がオンのときだけ記録し、
+     * 観戦(kifuMode() が "spectate")は記録しない
+     */
     this.kifuRecorder =
-      typeof KifuRecorder === "function" ? new KifuRecorder({ mode: this.kifuMode(), roomCode: roomController.code || null }) : null;
+      typeof KifuRecorder === "function" && kifuRecordingEnabled(this.kifuMode())
+        ? new KifuRecorder({ mode: this.kifuMode(), roomCode: roomController.code || null })
+        : null;
 
     /** 対局を続けられなくなった理由(相手の退出・再接続の失敗)。null なら続行中 */
     this.connectionEndedMessage = null;
@@ -10160,8 +10166,10 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
 /**
  * 牌譜(対局の記録)の保存・書き出し/読み込み・再生。
  *
- * - KifuRecorder: 対局画面(CPU対戦・オンライン対戦・観戦)の render() のたびに状態を受け取り、
+ * - KifuRecorder: 対局画面(CPU対戦・オンライン対戦)の render() のたびに状態を受け取り、
  *   変化があれば1コマとして記録する。端末内(IndexedDB)へ自動で保存する(直近 KIFU_MAX_RECORDS 件)。
+ *   オプション画面で対局の種類ごとに記録するかを選べる(loadKifuSettings)。観戦は記録しない
+ *   (mode "spectate" は以前に保存した牌譜・読み込んだファイルの表示用に残している)。
  * - KifuStore: IndexedDB への保存・一覧・削除。
  * - ReplayMahjongApp: 保存した牌譜を、対局画面と同じ卓の描画で1コマずつ再生する(両者の手牌を公開)。
  *
@@ -10390,6 +10398,35 @@ function kifuRoundSerial(s) {
 
 function kifuNewId() {
   return `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ---------------- 牌譜を残すかどうかの設定(オプション画面) ----------------
+const KIFU_SETTINGS_STORAGE_KEY = "mahjong_kifu_settings";
+
+/** 牌譜を残すかどうか {online, cpu}(既定はどちらも残す)。観戦は常に残さない */
+function loadKifuSettings() {
+  const def = { online: true, cpu: true };
+  try {
+    const v = JSON.parse(localStorage.getItem(KIFU_SETTINGS_STORAGE_KEY) || "null");
+    if (!v || typeof v !== "object") return def;
+    return { online: v.online !== false, cpu: v.cpu !== false };
+  } catch (e) {
+    return def;
+  }
+}
+
+function saveKifuSettings(settings) {
+  try {
+    localStorage.setItem(KIFU_SETTINGS_STORAGE_KEY, JSON.stringify({ online: !!settings.online, cpu: !!settings.cpu }));
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/** この種類の対局を牌譜に残すか(対局の開始時に確かめる)。観戦は残さない */
+function kifuRecordingEnabled(mode) {
+  if (mode !== "cpu" && mode !== "online") return false;
+  return loadKifuSettings()[mode];
 }
 
 class KifuRecorder {
@@ -12761,6 +12798,23 @@ const MahjongLobby = (function () {
       urlField.appendChild(el("span", { className: "settings-hint", textContent: `既定: ${DEFAULT_SERVER_URL}` }));
       basicCol.appendChild(urlField);
 
+      // 牌譜を残すかどうか(オンライン対戦・CPU対戦ごと。観戦は残さない)
+      const kifuSettings = typeof loadKifuSettings === "function" ? loadKifuSettings() : { online: true, cpu: true };
+      const kifuGroup = el("fieldset", { className: "room-options-group settings-kifu" });
+      kifuGroup.appendChild(el("legend", { textContent: "牌譜を残す" }));
+      const kifuCheckbox = (text, checked) => {
+        const label = el("label", { className: "room-options-choice" });
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = checked;
+        label.appendChild(cb);
+        label.appendChild(el("span", { textContent: " " + text }));
+        kifuGroup.appendChild(label);
+        return cb;
+      };
+      const kifuOnlineCb = kifuCheckbox("オンライン対戦", kifuSettings.online);
+      const kifuCpuCb = kifuCheckbox("CPU対戦", kifuSettings.cpu);
+      basicCol.appendChild(kifuGroup);
+
       // 効果音・発声(対局画面のスピーカーのボタンでも、すべての音をまとめて消せる)
       const sound = MahjongSound.getSettings();
       const soundGroup = el("fieldset", { className: "room-options-group" });
@@ -12818,6 +12872,7 @@ const MahjongLobby = (function () {
         }
         saveLastServerUrl(url);
         saveLastPlayerName(nameInput.value.trim());
+        if (typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
         MahjongSound.update({
           se: seCb.checked,
           voice: voiceCb.checked,

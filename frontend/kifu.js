@@ -1,8 +1,10 @@
 /**
  * 牌譜(対局の記録)の保存・書き出し/読み込み・再生。
  *
- * - KifuRecorder: 対局画面(CPU対戦・オンライン対戦・観戦)の render() のたびに状態を受け取り、
+ * - KifuRecorder: 対局画面(CPU対戦・オンライン対戦)の render() のたびに状態を受け取り、
  *   変化があれば1コマとして記録する。端末内(IndexedDB)へ自動で保存する(直近 KIFU_MAX_RECORDS 件)。
+ *   オプション画面で対局の種類ごとに記録するかを選べる(loadKifuSettings)。観戦は記録しない
+ *   (mode "spectate" は以前に保存した牌譜・読み込んだファイルの表示用に残している)。
  * - KifuStore: IndexedDB への保存・一覧・削除。
  * - ReplayMahjongApp: 保存した牌譜を、対局画面と同じ卓の描画で1コマずつ再生する(両者の手牌を公開)。
  *
@@ -231,6 +233,35 @@ function kifuRoundSerial(s) {
 
 function kifuNewId() {
   return `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ---------------- 牌譜を残すかどうかの設定(オプション画面) ----------------
+const KIFU_SETTINGS_STORAGE_KEY = "mahjong_kifu_settings";
+
+/** 牌譜を残すかどうか {online, cpu}(既定はどちらも残す)。観戦は常に残さない */
+function loadKifuSettings() {
+  const def = { online: true, cpu: true };
+  try {
+    const v = JSON.parse(localStorage.getItem(KIFU_SETTINGS_STORAGE_KEY) || "null");
+    if (!v || typeof v !== "object") return def;
+    return { online: v.online !== false, cpu: v.cpu !== false };
+  } catch (e) {
+    return def;
+  }
+}
+
+function saveKifuSettings(settings) {
+  try {
+    localStorage.setItem(KIFU_SETTINGS_STORAGE_KEY, JSON.stringify({ online: !!settings.online, cpu: !!settings.cpu }));
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/** この種類の対局を牌譜に残すか(対局の開始時に確かめる)。観戦は残さない */
+function kifuRecordingEnabled(mode) {
+  if (mode !== "cpu" && mode !== "online") return false;
+  return loadKifuSettings()[mode];
 }
 
 class KifuRecorder {

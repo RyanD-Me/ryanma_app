@@ -58,9 +58,14 @@ class OnlineMahjongApp extends MahjongApp {
     // ロビー側のデフォルト名(Player1/Player2)と同じ規則にしておく。
     this.playerNames = { east: "Player1", south: "Player2" };
 
-    /** 牌譜の記録(kifu.js)。観戦画面では mode が "spectate" になる */
+    /**
+     * 牌譜の記録(kifu.js)。オンライン対戦はオプション画面で「オンライン対戦を残す」がオンのときだけ記録し、
+     * 観戦(kifuMode() が "spectate")は記録しない
+     */
     this.kifuRecorder =
-      typeof KifuRecorder === "function" ? new KifuRecorder({ mode: this.kifuMode(), roomCode: roomController.code || null }) : null;
+      typeof KifuRecorder === "function" && kifuRecordingEnabled(this.kifuMode())
+        ? new KifuRecorder({ mode: this.kifuMode(), roomCode: roomController.code || null })
+        : null;
 
     /** 対局を続けられなくなった理由(相手の退出・再接続の失敗)。null なら続行中 */
     this.connectionEndedMessage = null;
