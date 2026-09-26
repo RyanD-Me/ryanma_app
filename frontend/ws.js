@@ -1638,6 +1638,19 @@ const MahjongLobby = (function () {
       }).observe(document.body, { childList: true, subtree: true });
     }
 
+    /**
+     * 対局(一荘戦/半荘戦)と起家の欄を1つの列にまとめる。スマホ横向きでは2つを縦に重ねて1列にし、
+     * 持ち時間などの欄の幅を確保する。縦向き・PC では列を無いものとして扱い(display: contents)、
+     * 起家の欄を最後に並べる(styles.css の「一荘戦・半荘戦」)。showOptionsScreen の fields に渡せる形で返す。
+     */
+    function buildLengthDealerColumn(length, dealer) {
+      const col = el("div", { className: "options-col" });
+      dealer.fieldset.classList.add("room-options-dealer");
+      col.appendChild(length.fieldset);
+      col.appendChild(dealer.fieldset);
+      return { fieldset: col };
+    }
+
     /** 設定画面の共通の枠(タイトル・エラー表示・決定/戻るボタン) */
     function showOptionsScreen(title, fields, okText, onOk) {
       root.innerHTML = "";
@@ -1688,7 +1701,7 @@ const MahjongLobby = (function () {
         loadRoomDealer()
       );
       const length = buildGameLengthField(loadRoomGameLength());
-      showOptionsScreen("ルームの設定", [length, time, spectate, dealer], "ルームを作成する", () => {
+      showOptionsScreen("ルームの設定", [buildLengthDealerColumn(length, dealer), time, spectate], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
@@ -1728,7 +1741,7 @@ const MahjongLobby = (function () {
         last.dealer
       );
       const length = buildGameLengthField(last.gameLength);
-      showOptionsScreen("CPU対戦の設定", [length, cpu, time, dealer], "開始する", () => {
+      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), cpu, time], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
         const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };

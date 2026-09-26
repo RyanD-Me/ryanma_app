@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-7kGBV5zQXiGCGiihlWbDTuAIkYE7JTmlxeJv9iqGc+A=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-hDXxMk2mDMpDFXoh3YOSeBcgSsiiylA0fUWIQia4frI=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-7kGBV5zQXiGCGiihlWbDTuAIkYE7JTmlxeJv9iqGc+A=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-sHSwR//MTLvt8RpSd2Z1Po7IehRhcxa0ZATLNVJAOtc=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1844,9 +1844,14 @@ h1, .round-badge, .log-title {
 .match-rule-btn { min-width: 10em; font-size: 1.05rem; }
 .match-rule-note { margin: 0; font-size: 0.85rem; opacity: 0.85; }
 .match-rule-group .match-rule-count { margin: 0; }
+/* 対局と起家の列: 縦向き・PC では列を作らず、起家の欄を最後に並べる */
+.options-col { display: contents; }
+.options-col > .room-options-dealer { order: 1; }
 @media (max-height: 480px) and (orientation: landscape) {
-  .options-screen .room-options-choice:has(.room-options-note) { flex-wrap: wrap; }
-  .options-screen .room-options-note { font-size: 0.68rem; padding-left: 20px; }
+  /* 横向きは説明文を出さず、対局の下に起家を重ねて1列にし、ほかの欄(持ち時間・観戦・CPU)の幅を確保する */
+  .options-screen .room-options-note { display: none; }
+  .options-screen .options-col { display: flex; flex-direction: column; gap: 8px; flex: 0.75 1 0; min-width: 0; }
+  .options-screen .options-col > .room-options-group { flex: 1 1 auto; }
   .match-rule-screen .match-rule-group { justify-content: center; padding: 14px 12px; }
 }
 
@@ -12521,6 +12526,19 @@ const MahjongLobby = (function () {
       }).observe(document.body, { childList: true, subtree: true });
     }
 
+    /**
+     * 対局(一荘戦/半荘戦)と起家の欄を1つの列にまとめる。スマホ横向きでは2つを縦に重ねて1列にし、
+     * 持ち時間などの欄の幅を確保する。縦向き・PC では列を無いものとして扱い(display: contents)、
+     * 起家の欄を最後に並べる(styles.css の「一荘戦・半荘戦」)。showOptionsScreen の fields に渡せる形で返す。
+     */
+    function buildLengthDealerColumn(length, dealer) {
+      const col = el("div", { className: "options-col" });
+      dealer.fieldset.classList.add("room-options-dealer");
+      col.appendChild(length.fieldset);
+      col.appendChild(dealer.fieldset);
+      return { fieldset: col };
+    }
+
     /** 設定画面の共通の枠(タイトル・エラー表示・決定/戻るボタン) */
     function showOptionsScreen(title, fields, okText, onOk) {
       root.innerHTML = "";
@@ -12571,7 +12589,7 @@ const MahjongLobby = (function () {
         loadRoomDealer()
       );
       const length = buildGameLengthField(loadRoomGameLength());
-      showOptionsScreen("ルームの設定", [length, time, spectate, dealer], "ルームを作成する", () => {
+      showOptionsScreen("ルームの設定", [buildLengthDealerColumn(length, dealer), time, spectate], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
@@ -12611,7 +12629,7 @@ const MahjongLobby = (function () {
         last.dealer
       );
       const length = buildGameLengthField(last.gameLength);
-      showOptionsScreen("CPU対戦の設定", [length, cpu, time, dealer], "開始する", () => {
+      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), cpu, time], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
         const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };

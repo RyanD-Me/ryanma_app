@@ -99,7 +99,8 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   下(横向きは右)にプレイヤー名・サーバー・オンライン人数。
 - 既定サーバー `wss://ryanma.onrender.com`(`DEFAULT_SERVER_URL`)。
 - CPU対戦の設定(対局・CPUの型・持ち時間・起家)、ルーム作成の設定(対局・持ち時間・観戦の許可・起家)は共通部品 `showOptionsScreen`。
-  「対局」は一荘戦/半荘戦の選択(`buildGameLengthField`、説明文は `GAME_LENGTH_NOTES`)。ルーム作成の選択は localStorage
+  「対局」は一荘戦/半荘戦の選択(`buildGameLengthField`、説明文は `GAME_LENGTH_NOTES`)。スマホ横向きでは説明文を出さず、
+  対局の下に起家を重ねて1列にする(`buildLengthDealerColumn` の `.options-col`。縦向き・PC は `display: contents` で起家が最後)。ルーム作成の選択は localStorage
   `mahjong_room_game_length`、CPU対戦は `mahjong_testplay_options` の `gameLength` に保存。
 - 自動マッチング: ロビーのボタン → ルール選択画面(`showMatchRuleSelect`。一荘戦/半荘戦のボタン・説明文・「接続数:n人」)
   → 待機画面(「ルール選択に戻る」「ロビーに戻る」)。サーバーは**同じルールの人とだけ組む**。「接続数」はそのルールで
