@@ -13,6 +13,8 @@
  *   戻れる(詳細は roomRegistry.js)。
  * - 応答の無くなった接続(スマホの電波切れ等で close が届かないもの)は、WebSocket の
  *   ping/pong で検出して切断扱いにする。
+ * - 接続数には上限がある(サーバー全体 MAX_CONNECTIONS・同じ接続元 MAX_CONNECTIONS_PER_IP)。超えた接続には
+ *   { type: "error", message } を送ってすぐ切る(大量の接続でサーバーのメモリを使い切られないように)。
  * - 接続数が変わるたび(誰かがつながった・切れた)、今つながっている全員に
  *   { type: "online-count", count, byRule: {full, half} } を送る(ロビー画面等のオンライン人数表示用。
  *   byRule はルールごとの対局中・相手待ちの人数で、ルームの出入りや相手待ちの出入りでも送り直す)。
@@ -70,18 +72,43 @@ const MAX_MESSAGE_BYTES = 512 * 1024;
 const RATE_WINDOW_MS = 10000;
 const RATE_MAX_MESSAGES = 300;
 
+/** 環境変数の正の整数(無い・不正なら既定値) */
+function envInt(name, def) {
+  const v = Number(process.env[name]);
+  return Number.isInteger(v) && v > 0 ? v : def;
+}
+/** サーバー全体の同時接続数の上限 */
+const MAX_CONNECTIONS = envInt("MAX_CONNECTIONS", 1000);
+/** 同じ接続元(IPアドレス)からの同時接続数の上限。学校や会社など同じ回線から複数人がつなぐこともあるので多めにする */
+const MAX_CONNECTIONS_PER_IP = envInt("MAX_CONNECTIONS_PER_IP", 20);
+const TOO_MANY_CONNECTIONS_MESSAGE = "サーバーが混み合っているため接続できませんでした。しばらくしてからお試しください。";
+
+/**
+ * 接続元のIPアドレス。ホスティング先(Render)の手前の中継(Cloudflare 等)が付ける接続元のヘッダーを優先し、
+ * 無ければ X-Forwarded-For の先頭、それも無ければ直接の接続元。ヘッダーは偽装されることもあるが、
+ * その場合でもサーバー全体の上限(MAX_CONNECTIONS)で守られる。
+ */
+function clientIp(req) {
+  const h = (req && req.headers) || {};
+  const first = (v) => (typeof v === "string" ? v.split(",")[0].trim() : "");
+  return first(h["cf-connecting-ip"]) || first(h["true-client-ip"]) || first(h["x-forwarded-for"]) || (req && req.socket && req.socket.remoteAddress) || "unknown";
+}
+/** 接続元ごとの今の接続数 */
+const connectionsPerIp = new Map();
+
 const wss = new WebSocketServer({ server: httpServer, maxPayload: MAX_MESSAGE_BYTES });
 
-// ルールごとの人数が変わったら(ルームの作成・参加・退室、相手待ちの出入り)全員へ知らせる。
-// 続けて何度も変わることがあるので、少しまとめてから送る。
+// 人数(接続数・ルールごとの対局中/相手待ちの人数)が変わったら全員へ知らせる。接続の出入りやルームの作成・参加・
+// 退室などで続けて何度も変わることがあるので、少しまとめてから送る(大量に接続・切断されても送る回数が増えすぎないように)。
 let countsTimer = null;
-registry.onCountsChanged = () => {
+function scheduleOnlineCountBroadcast() {
   if (countsTimer) return;
   countsTimer = setTimeout(() => {
     countsTimer = null;
     broadcastOnlineCount();
   }, 300);
-};
+}
+registry.onCountsChanged = scheduleOnlineCountBroadcast;
 
 /** WebSocket レベルの生存確認の間隔(ミリ秒)。この間に pong が返らなければ切断扱いにする。 */
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -97,7 +124,29 @@ function broadcastOnlineCount() {
   }
 }
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  // 接続数の上限を超えたら、理由を伝えてすぐ切る(ルーム・相手待ちなどには一切登録しない)
+  const ip = clientIp(req);
+  const ipCount = connectionsPerIp.get(ip) || 0;
+  if (wss.clients.size > MAX_CONNECTIONS || ipCount >= MAX_CONNECTIONS_PER_IP) {
+    try {
+      ws.send(JSON.stringify({ type: "error", message: TOO_MANY_CONNECTIONS_MESSAGE }));
+      ws.close(1013, "too many connections");
+    } catch (e) {
+      ws.terminate();
+    }
+    return;
+  }
+  connectionsPerIp.set(ip, ipCount + 1);
+  let released = false;
+  const releaseIp = () => {
+    if (released) return;
+    released = true;
+    const n = (connectionsPerIp.get(ip) || 1) - 1;
+    if (n > 0) connectionsPerIp.set(ip, n);
+    else connectionsPerIp.delete(ip);
+  };
+
   const conn = {
     send(obj) {
       if (ws.readyState !== ws.OPEN) return;
@@ -141,18 +190,20 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    releaseIp();
     registry.handleDisconnect(conn);
-    broadcastOnlineCount();
+    scheduleOnlineCountBroadcast();
   });
 
   ws.on("error", () => {
+    releaseIp();
     registry.handleDisconnect(conn);
-    broadcastOnlineCount();
+    scheduleOnlineCountBroadcast();
   });
 
   // 接続直後の時点で wss.clients には既にこの ws 自身が含まれているため、
-  // 全員(この接続自身も含む)へ最新の人数を知らせる。
-  broadcastOnlineCount();
+  // 全員(この接続自身も含む)へ最新の人数を知らせる(少しまとめてから)。
+  scheduleOnlineCountBroadcast();
 });
 
 const heartbeat = setInterval(() => {
