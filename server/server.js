@@ -46,9 +46,9 @@ const { AccountService } = require("./accounts");
 const { AccountStore, MemoryDocStore } = require("./accountStore");
 const { FirebaseAuthMailer, FakeAuthMailer } = require("./authMailer");
 const { FirebaseClient } = require("./firebaseClient");
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "ryanma-8be54";
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "ryanma-online";
 // ウェブ API キーは公開ページにも埋め込む前提の値(秘密ではない)
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCLqqKRjV_YsyP_uh4ktYq7Ja_lNGrSQbI";
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCaqSYK-N4lZDLlg1aF5jLsUtXF4RvQKm4";
 /** メールのリンクの戻り先(公開ページ) */
 const PUBLIC_URL = process.env.PUBLIC_URL || "https://ryand-me.github.io/ryanma_app/";
 let firebaseClient = null;
