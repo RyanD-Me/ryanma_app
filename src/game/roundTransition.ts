@@ -71,8 +71,10 @@ export function advanceRound(state: GameState, dealerContinues: boolean, seed?: 
       roundNumber = 2;
     } else {
       const windIndex = WIND_ORDER.indexOf(roundWind);
-      if (windIndex === WIND_ORDER.length - 1) {
-        // 北2局(8局目)が終わった場合、対局終了。
+      // 一荘戦は北、半荘戦は南がオーラスの場風
+      const lastWindIndex = state.totalRounds === 4 ? 1 : WIND_ORDER.length - 1;
+      if (windIndex >= lastWindIndex) {
+        // オーラス(一荘戦は北2局=8局目、半荘戦は南2局=4局目)が終わった場合、対局終了。
         // オーラス時点で供託されたままのリーチ棒は起家が受け取る。
         const startingDealer = state.startingDealer;
         const bonus = state.riichiSticks * 1000;

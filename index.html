@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-iW6n///fcnu232hVSb6dpnyi0HWxlHGFb3buH0NTHZ8=' 'sha256-kRYujZi5OtMJUT0VVmuAv0/dG1V1l6DEEDFjFKXbozg=' 'sha256-Gbww0d535zl4qsAUjo4by7M8WQah39TGJVs+zcwTM8k=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-5nORkxEE8jCQV69tAmJLUyQh2M3UoJHU1EjlARZL04c=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-dNKC6peBC/lxI8LrVKWtJWeVcqPLclFskMboTZalzmE=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-+G83e1+V4arKJGQWFxPC2iC5ECIyqUO/eboZbWhq88M=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1489,7 +1489,28 @@ h1, .round-badge, .log-title {
 .room-options-hint { width: 100%; font-size: 0.75rem; opacity: 0.8; }
 
 /* ---------------- ロビー「ルール確認」画面 ---------------- */
-.rules-view { max-height: 80vh; overflow-y: auto; }
+/* ルール確認: 文面(.rules-scroll)だけをスクロールし、画面名と戻るボタンは常に見えるようにする */
+.rules-view {
+  /* 画面の高さから上のタイトル・余白(約110px)を引いた高さ。PC で拡大(zoom)している分は割り戻す */
+  max-height: calc((100vh - 110px) / var(--shell-zoom, 1));
+  max-height: calc((100dvh - 110px) / var(--shell-zoom, 1));
+  overflow: hidden;
+}
+@media (max-height: 480px) and (orientation: landscape) {
+  /* スマホ横向き: 画面名の行を隠し、ルールの枠を画面の高さいっぱいに使う(縮小がかからないように) */
+  .title-row:has(~ #app .rules-view) { display: none; }
+  .app-shell:has(.rules-view) { padding-top: 8px; padding-bottom: 8px; }
+  .rules-view { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); padding: 12px 16px; gap: 10px; }
+}
+.rules-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rules-back-btn { flex-shrink: 0; align-self: flex-start; }
 .rules-section-title { margin: 6px 0 0; font-size: 1rem; color: var(--gold); }
 .rules-text {
   margin: 0;
@@ -1819,6 +1840,39 @@ h1, .round-badge, .log-title {
    条件と幅は app.js の BOARD_WIDE_TABLE_MIN_WIDTH / BOARD_TABLE_DESIGN_WIDTH と合わせる(拡大率の計算に使う) */
 @media (min-width: 900px) and (min-height: 481px) {
   .app-shell:has(.table:not(.table-landscape)) { max-width: 1100px; }
+}
+
+/* 自分の手牌とツモ牌は、牌の厚み(色帯)を上側に付ける(手前から立てた牌を見ている見た目)。
+   鳴いた面子(.melds)はこれまでどおり下側。縦向き・横向き・PC 共通。 */
+.hand-row:not(.hand-row-opponent) .hand-and-draw .tile:not(.tile-back) {
+  box-shadow: 0 -3px 0 var(--tile-face-shadow);
+}
+.hand-row:not(.hand-row-opponent) .hand-and-draw .tile.tile-back {
+  box-shadow: 0 -3px 0 #c98f27;
+}
+
+/* ---------------- 一荘戦・半荘戦 ----------------
+   設定画面の選択肢の説明文(「東〜北2局ずつの計8局」など)は選択肢の下に小さく出す。
+   自動マッチングのルール選択画面は、ルールごとにボタン・説明文・接続数を縦に並べる。 */
+.room-options-choice > .room-options-note {
+  flex-basis: 100%;
+  padding-left: 22px;
+  font-size: 0.75rem;
+  opacity: 0.8;
+  white-space: normal;
+}
+.match-rule-group { align-items: center; text-align: center; gap: 6px; }
+.match-rule-btn { min-width: 10em; font-size: 1.05rem; }
+.match-rule-note { margin: 0; font-size: 0.85rem; opacity: 0.85; }
+.match-rule-group .match-rule-count { margin: 0; }
+/* 対局と起家の列: 縦向き・PC では列を作らず、対局・起家の順にそのまま縦に並べる */
+.options-col { display: contents; }
+@media (max-height: 480px) and (orientation: landscape) {
+  /* 横向きは説明文を出さず、対局の下に起家を重ねて1列にし、ほかの欄(持ち時間・観戦・CPU)の幅を確保する */
+  .options-screen .room-options-note { display: none; }
+  .options-screen .options-col { display: flex; flex-direction: column; gap: 8px; flex: 0.75 1 0; min-width: 0; }
+  .options-screen .options-col > .room-options-group { flex: 1 1 auto; }
+  .match-rule-screen .match-rule-group { justify-content: center; padding: 14px 12px; }
 }
 
 </style>
@@ -4293,8 +4347,10 @@ function advanceRound(state, dealerContinues, seed) {
         }
         else {
             const windIndex = WIND_ORDER.indexOf(roundWind);
-            if (windIndex === WIND_ORDER.length - 1) {
-                // 北2局(8局目)が終わった場合、対局終了。
+            // 一荘戦は北、半荘戦は南がオーラスの場風
+            const lastWindIndex = state.totalRounds === 4 ? 1 : WIND_ORDER.length - 1;
+            if (windIndex >= lastWindIndex) {
+                // オーラス(一荘戦は北2局=8局目、半荘戦は南2局=4局目)が終わった場合、対局終了。
                 // オーラス時点で供託されたままのリーチ棒は起家が受け取る。
                 const startingDealer = state.startingDealer;
                 const bonus = state.riichiSticks * 1000;
@@ -5334,6 +5390,8 @@ const E = MahjongEngine;
 
 /** 和了(ツモ/ロン)表示を、出してから自動的に消すまでの時間(ミリ秒) */
 const WIN_BANNER_DURATION_MS = 1500;
+/** 最後の打牌から「流局」を表示するまでの待ち(ミリ秒)。サーバーの EXHAUSTIVE_DRAW_DELAY_MS と合わせる */
+const EXHAUSTIVE_DRAW_DELAY_MS = 500;
 /** ポン・カン・リーチ表示を、出してから自動的に消すまでの時間(ミリ秒) */
 const CALL_BANNER_DURATION_MS = 1200;
 /** リーチ後にツモ切りしか選べない場合、自動で切るまでの待ち時間(ミリ秒) */
@@ -6363,6 +6421,8 @@ class MahjongApp {
    */
   constructor(root, options = {}) {
     this.root = root;
+    // 対局の長さ: "full" = 一荘戦(東〜北2局ずつの計8局) / "half" = 半荘戦(東・南2局ずつの計4局)
+    this.gameLength = options.gameLength === "half" ? "half" : "full";
     // 画面の向きが変わったら、縦向き用/横向き用のレイアウトを描き直す。
     // 卓が破棄された(root から外れた)後は自分で登録を解除する。
     if (LANDSCAPE_PHONE_MQ && LANDSCAPE_PHONE_MQ.addEventListener) {
@@ -6507,7 +6567,7 @@ class MahjongApp {
       currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
-      totalRounds: 8,
+      totalRounds: this.gameLength === "half" ? 4 : 8,
       startingScore: 45000,
       gameEndReason: null,
     };
@@ -6830,6 +6890,18 @@ class MahjongApp {
   }
 
   computeCallOptions(seat, discardTile) {
+    const { canRon, canPon, canMinkan } = this.rawCallOptions(seat, discardTile);
+    // 「鳴き無し」中はポン・カンを最初から無かったことにする。こうすることで、
+    // 選択肢が出ないだけでなく autoAdvance() 側でも自動的にスルーされる
+    // (ロンだけは通常どおり残る)。
+    if (this.isNoCallFor(seat)) {
+      return { canRon, canPon: false, canMinkan: false };
+    }
+    return { canRon, canPon, canMinkan };
+  }
+
+  /** 「鳴き無し」を考えない、実際にロン・ポン・カンができるか */
+  rawCallOptions(seat, discardTile) {
     const player = this.state.players[seat];
     const context = E.buildWinContext(this.state, seat, discardTile, false);
     const canRon = E.canDeclareRon(
@@ -6854,12 +6926,6 @@ class MahjongApp {
       this.state.wall.liveWall.length,
       this.state.kanCount
     );
-    // 「鳴き無し」中はポン・カンを最初から無かったことにする。こうすることで、
-    // 選択肢が出ないだけでなく autoAdvance() 側でも自動的にスルーされる
-    // (ロンだけは通常どおり残る)。
-    if (this.isNoCallFor(seat)) {
-      return { canRon, canPon: false, canMinkan: false };
-    }
     return { canRon, canPon, canMinkan };
   }
 
@@ -6889,6 +6955,19 @@ class MahjongApp {
 
       if (this.state.phase === "draw") {
         if (this.state.wall.liveWall.length === 0) {
+          // 最後の打牌の直後にすぐ「流局」と出さず、少し(EXHAUSTIVE_DRAW_DELAY_MS)待ってから流局にする
+          const key = this.roundKey();
+          if (this._exhaustiveDelayKey !== key) {
+            this._exhaustiveDelayKey = key;
+            this._exhaustiveReadyKey = null;
+            setTimeout(() => {
+              if (this._destroyed || this._exhaustiveDelayKey !== key) return;
+              this._exhaustiveReadyKey = key;
+              if (this.state && this.state.phase === "draw" && this.roundKey() === key) this.render();
+            }, EXHAUSTIVE_DRAW_DELAY_MS);
+            break;
+          }
+          if (this._exhaustiveReadyKey !== key) break;
           this.snapshotPreResultScores();
           const outcome = E.resolveExhaustiveDraw(this.state);
           this.state = outcome.state;
@@ -7154,6 +7233,10 @@ class MahjongApp {
     if (advanced) this.afterAutoAdvance();
     // 持ち時間: 局・判断の切り替わりを反映してから描画する(表示に残り時間を出すため)
     this.syncTurnTimer();
+    // 結果画面が出るまでの供託の表示用に、局の途中の本数を覚えておく
+    if (this.state && this.state.phase !== "round_end" && this.state.phase !== "game_end") {
+      this._lastPlayRiichiSticks = this.state.riichiSticks;
+    }
     this.root.innerHTML = "";
     this.root.appendChild(this.renderTable());
     this.appendExitConfirm();
@@ -7507,7 +7590,7 @@ class MahjongApp {
     [
       [`${windLabel(this.state.roundWind)}${this.state.roundNumber}局`, "round-badge"],
       [`山 残り${this.state.wall.liveWall.length}枚`, ""],
-      [`供託 ${this.state.riichiSticks}本`, ""],
+      [`供託 ${this.displayedRiichiSticks()}本`, ""],
     ].forEach(([text, cls], i) => {
       if (i > 0) roundInfo.appendChild(document.createTextNode(" "));
       const span = document.createElement("span");
@@ -7601,7 +7684,7 @@ class MahjongApp {
 
     const scoreEl = document.createElement("span");
     scoreEl.className = "table-center-seat-score";
-    scoreEl.textContent = `${this.state.players[seat].score}点`;
+    scoreEl.textContent = `${this.displayedScore(seat)}点`;
     wrap.appendChild(scoreEl);
     return wrap;
   }
@@ -8281,6 +8364,30 @@ class MahjongApp {
     if (wrap) this.applyTurnTimerDisplay(wrap, rem);
   }
 
+  /**
+   * 結果画面(和了・流局のボックス)がまだ出ていない間か。和了・流局の直後は、ツモ/ロンや「流局」の
+   * 大きい文字だけを見せている。この間は、卓の点数・供託の表示をその局の結果が出る前の値のままにする。
+   */
+  isResultPending() {
+    const s = this.state;
+    if (!s || (s.phase !== "round_end" && s.phase !== "game_end")) return false;
+    return this.isWinRevealing() || this.isExhaustiveDrawRevealing();
+  }
+
+  /** 卓に表示する点数。点数のやり取りは結果画面が出てから見せる(それまではその局の増減を引いた値) */
+  displayedScore(seat) {
+    const score = this.state.players[seat].score;
+    const change = this.roundScoreChange;
+    if (this.isResultPending() && change && typeof change[seat] === "number") return score - change[seat];
+    return score;
+  }
+
+  /** 卓に表示する供託の本数(結果画面が出るまでは、局の結果が出る前の本数) */
+  displayedRiichiSticks() {
+    if (this.isResultPending() && this._lastPlayRiichiSticks != null) return this._lastPlayRiichiSticks;
+    return this.state.riichiSticks;
+  }
+
   snapshotPreResultScores() {
     if (!this.state || !this.state.players) return;
     this._preResultScores = { east: this.state.players.east.score, south: this.state.players.south.score };
@@ -8543,7 +8650,7 @@ class MahjongApp {
       addLine(
         reason && reason.type === "bust"
           ? `${this.seatLabel(reason.bustedPlayer)}家がトビました`
-          : "全8局が終了しました",
+          : `全${this.state.totalRounds || 8}局が終了しました`,
         "result-heading"
       );
       addLine("対局終了", "result-main");
@@ -9305,6 +9412,7 @@ function applyBoardScale() {
   const height = window.innerHeight;
   if (width < BOARD_SCALE_MIN_WIDTH) {
     shell.style.zoom = "";
+    shell.style.setProperty("--shell-zoom", "1");
     return;
   }
   // PC の対局画面は、卓を広げたときの基準サイズで拡大率を決める
@@ -9318,6 +9426,8 @@ function applyBoardScale() {
   // 1倍未満(縦に短い横向きスマートフォンなど)では拡大も縮小もしない
   const zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
   if (shell.style.zoom !== zoom) shell.style.zoom = zoom;
+  // 画面の高さに合わせる要素(ルール確認など)が、拡大した分を割り戻して高さを決められるようにする
+  shell.style.setProperty("--shell-zoom", zoom || "1");
 }
 
 window.addEventListener("resize", applyBoardScale);
@@ -9376,11 +9486,11 @@ class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
    * @param {{roomController: object, mySeat: "east"|"south", onExit?: Function,
-   *   dealerChoice?: "self"|"opponent"|"random"}} opts
-   *   timeControl・dealerChoice はルーム作成時の設定(待機画面の表示用。実際の値はサーバーから届く)
+   *   dealerChoice?: "self"|"opponent"|"random", gameLength?: "full"|"half"}} opts
+   *   timeControl・dealerChoice・gameLength はルーム作成時の設定(待機画面の表示用。実際の値はサーバーから届く)
    */
-  constructor(root, { roomController, mySeat, onExit, timeControl, isMatch, dealerChoice }) {
-    super(root, { autoStart: false, onExit, timeControl });
+  constructor(root, { roomController, mySeat, onExit, timeControl, isMatch, dealerChoice, gameLength }) {
+    super(root, { autoStart: false, onExit, timeControl, gameLength });
     this.roomController = roomController;
     this.mySeat = mySeat;
     this.dealerChoice = ["self", "opponent", "random"].includes(dealerChoice) ? dealerChoice : "self";
@@ -9651,6 +9761,7 @@ class OnlineMahjongApp extends MahjongApp {
       // 持ち時間・起家の決め方はサーバーが持つ設定に合わせる
       if (g.timeControl !== undefined) this.timeControl = g.timeControl;
       if (g.dealerChoice !== undefined) this.dealerChoice = g.dealerChoice;
+      if (g.gameLength === "full" || g.gameLength === "half") this.gameLength = g.gameLength;
       // 結果画面の間、同じ流局結果が何度も届いても再表示タイマーをやり直さないよう、
       // lastWin と同様に内容が変わった時だけ反映する。
       const incomingExhaustive = g.lastExhaustiveOutcome || null;
@@ -9720,10 +9831,27 @@ class OnlineMahjongApp extends MahjongApp {
 
   render() {
     super.render();
+    this._autoPassIfNoCall();
     this._renderSpectatorBadge();
     this._renderConnectionOverlay();
     // 退室の確認ダイアログは接続状態の表示より前面に出す
     this.appendExitConfirm();
+  }
+
+  /**
+   * 「鳴き無し」がオンで、相手の捨て牌をポン・カンできる(ロンはできない)場合は、自動でスルーを送る。
+   * オンライン対戦では見送りもサーバーが進めるため、送らないとサーバーが自分の判断を待ったまま止まってしまう
+   * (ロンできる場合は、鳴き無しでもロンの選択肢を残す)。
+   */
+  _autoPassIfNoCall() {
+    const s = this.state;
+    if (!s || !this.noCall || s.phase !== "call_window" || !s.lastDiscard) return;
+    const seat = OnlineEngine.otherSeat(s.lastDiscard.from);
+    if (!this.canAct("callWindow", seat)) return;
+    const raw = this.rawCallOptions(seat, s.lastDiscard.tile);
+    // サーバーが自分の判断を待っているのは、実際に鳴ける時だけ(鳴けない牌での待ちは送らなくても進む)
+    if (raw.canRon || (!raw.canPon && !raw.canMinkan)) return;
+    this._sendAction({ type: "pass" });
   }
 
   /** 観戦者がいれば、卓の左上に「観戦 n人」と小さく表示する */
@@ -9841,6 +9969,10 @@ class OnlineMahjongApp extends MahjongApp {
         dc.className = "lobby-peer-status";
         dc.textContent = `起家: ${{ self: "自分", opponent: "相手", random: "ランダム" }[this.dealerChoice]}`;
         wrap.appendChild(dc);
+        const gl = document.createElement("p");
+        gl.className = "lobby-peer-status";
+        gl.textContent = `対局: ${this.gameLength === "half" ? "半荘戦(東・南2局ずつの計4局)" : "一荘戦(東〜北2局ずつの計8局)"}`;
+        wrap.appendChild(gl);
       }
     } else {
       const hint = document.createElement("p");
@@ -10816,13 +10948,14 @@ const MATCH_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 // ---------------- ロビー画面「ルール確認」に表示するルール文面 ----------------
 // あくまで表示用のテキストであり、実際のゲームロジック(役・点数計算等)には一切影響しない。
-const SIMPLE_RULES_TEXT = `・東〜北各2局ずつの計8局
+const SIMPLE_RULES_TEXT = `・東〜北各2局の計8局または東・南各2局の計4局
 ・持ち点45,000点
 ・トビ終了あり(0点は続行、リーチ不可)
 ・チーなし
 ・ツモ和了は点数を4分の3とする
 ・1,000点未満切り上げ
 ・ノーテン罰符5,000点、形式テンパイあり
+・オーラスの親のテンパイ止め・アガリ止めなし
 ・一部役の翻数変更、追加役あり
 　(詳細ルールを参照)`;
 
@@ -10834,7 +10967,7 @@ const DETAILED_RULES_TEXT = `【使用牌種】
 計20種80枚
 
 【基本ルール】
-・一荘戦(東1局〜北2局 計8局)
+・一荘戦(東〜北各2局の計8局)または半荘戦(東・南各2局の計4局)
 ・親を東家、子を南家とする
 ・持ち点45,000点、45,000点返し
 ・トビ終了あり(0点は続行、リーチ不可)
@@ -10923,7 +11056,7 @@ const DETAILED_RULES_TEXT = `【使用牌種】
 ・流し役満
 　捨て牌が2〜8の萬子のみかつ相手に捨て牌を鳴かれていない状態で流局すると成立
 　成立者に役満分の点数を支払う
-　祝儀扱いのため、その局は通常の流局と同様に扱う(ノーテン罰符あり、供託はそのまま、親がテンパイしていれば連荘、ノーテンなら親流れ※北2局ならゲーム終了)
+　祝儀扱いのため、その局は通常の流局と同様に扱う(ノーテン罰符あり、供託はそのまま、親がテンパイしていれば連荘、ノーテンなら親流れ※オーラス(一荘戦は北2局、半荘戦は南2局)ならゲーム終了)
 
 【追加役】
 ・大七星(だいちーしん)
@@ -11032,9 +11165,10 @@ function getOrCreateClientId() {
 class WsRoomController {
   /**
    * @param {{serverUrl: string, name?: string|null, allowSpectate?: boolean, timeControl?: object|null,
-   *          dealerChoice?: string}} opts  allowSpectate・timeControl・dealerChoice はルーム作成時だけ使う
+   *          dealerChoice?: string, gameLength?: string}} opts  allowSpectate・timeControl・dealerChoice はルーム作成時だけ、
+   *          gameLength(一荘戦 "full" / 半荘戦 "half")はルーム作成と自動マッチングで使う
    */
-  constructor({ serverUrl, name, allowSpectate, timeControl, dealerChoice }) {
+  constructor({ serverUrl, name, allowSpectate, timeControl, dealerChoice, gameLength }) {
     this.serverUrl = serverUrl;
     this.myName = name || null;
     /** ルーム作成時に、観戦を許可するか(参加・自動マッチングでは使わない) */
@@ -11042,6 +11176,8 @@ class WsRoomController {
     /** ルーム作成時の持ち時間・起家の決め方(対局はサーバーがこの設定で進める) */
     this.timeControl = timeControl === undefined ? DEFAULT_TIME_CONTROL : timeControl;
     this.dealerChoice = dealerChoice || "self";
+    /** 対局の長さ(ルーム作成・自動マッチングで送る) */
+    this.gameLength = gameLength === "half" ? "half" : "full";
     /** この対局を観戦している人数(サーバーから通知される) */
     this.spectatorCount = 0;
     /** サーバーに接続中の人数(この接続自身も含む。サーバーから通知される)。未受信は null */
@@ -11461,6 +11597,7 @@ class WsRoomController {
       allowSpectate: this.allowSpectate,
       timeControl: this.timeControl,
       dealerChoice: this.dealerChoice,
+      gameLength: this.gameLength,
     });
   }
 
@@ -11474,7 +11611,9 @@ class WsRoomController {
    * (created/joined と同じく)座席が決まった時点で解決する。
    */
   findMatch() {
-    return this._request({ type: "match", protocol: WS_PROTOCOL_VERSION, name: this.myName, clientId: getOrCreateClientId() });
+    return this._request({ type: "match", protocol: WS_PROTOCOL_VERSION, name: this.myName, clientId: getOrCreateClientId(),
+      gameLength: this.gameLength,
+    });
   }
 
   /** 自動マッチングの相手待ちをやめる(サーバーの待ち行列から外れて接続を閉じる) */
@@ -11937,10 +12076,26 @@ const MahjongLobby = (function () {
       /* ignore */
     }
   }
+  const ROOM_GAME_LENGTH_STORAGE_KEY = "mahjong_room_game_length";
+  /** 前回ルーム作成時に選んだ対局の長さ("full" = 一荘戦 | "half" = 半荘戦。既定 "full") */
+  function loadRoomGameLength() {
+    try {
+      return localStorage.getItem(ROOM_GAME_LENGTH_STORAGE_KEY) === "half" ? "half" : "full";
+    } catch (e) {
+      return "full";
+    }
+  }
+  function saveRoomGameLength(v) {
+    try {
+      localStorage.setItem(ROOM_GAME_LENGTH_STORAGE_KEY, v);
+    } catch (e) {
+      /* ignore */
+    }
+  }
   const TEST_PLAY_OPTIONS_STORAGE_KEY = "mahjong_testplay_options";
-  /** 前回のテストプレイの設定 { cpuType, timeControl, dealer }(無ければ既定値) */
+  /** 前回のテストプレイの設定 { cpuType, timeControl, dealer, gameLength }(無ければ既定値) */
   function loadTestPlayOptions() {
-    const def = { cpuType: "weak", timeControl: DEFAULT_TIME_CONTROL, dealer: "self" };
+    const def = { cpuType: "weak", timeControl: DEFAULT_TIME_CONTROL, dealer: "self", gameLength: "full" };
     try {
       const v = JSON.parse(localStorage.getItem(TEST_PLAY_OPTIONS_STORAGE_KEY) || "null");
       if (!v || typeof v !== "object") return def;
@@ -11954,6 +12109,7 @@ const MahjongLobby = (function () {
               : "weak",
         timeControl: tc,
         dealer: ["self", "cpu", "random"].includes(v.dealer) ? v.dealer : "self",
+        gameLength: v.gameLength === "half" ? "half" : "full",
       };
     } catch (e) {
       return def;
@@ -12021,14 +12177,20 @@ const MahjongLobby = (function () {
   // 複雑にしないための分離。
   /** 直近に受け取ったオンライン人数。まだ受け取っていない・切断中は null(=表示しない)。 */
   let onlineCountValue = null;
+  /**
+   * 直近に受け取ったルールごとの対局中・相手待ちの人数 {full, half}(自動マッチングのルール選択画面の
+   * 「接続数」)。まだ受け取っていない・切断中・古いサーバーで送られてこない場合は null。
+   */
+  let ruleCountsValue = null;
   const onlineCountListeners = new Set();
   let onlineCountWs = null;
   let onlineCountRetryTimer = null;
   const ONLINE_COUNT_RETRY_MS = 8000;
 
-  function notifyOnlineCount(value) {
+  function notifyOnlineCount(value, byRule) {
     onlineCountValue = value;
-    for (const cb of onlineCountListeners) cb(value);
+    ruleCountsValue = byRule || null;
+    for (const cb of onlineCountListeners) cb(value, ruleCountsValue);
   }
 
   function connectOnlineCountSocket() {
@@ -12050,7 +12212,10 @@ const MahjongLobby = (function () {
         return;
       }
       if (msg && msg.type === "online-count" && typeof msg.count === "number") {
-        notifyOnlineCount(msg.count);
+        const b = msg.byRule;
+        const byRule =
+          b && typeof b === "object" && Number.isFinite(b.full) && Number.isFinite(b.half) ? { full: b.full, half: b.half } : null;
+        notifyOnlineCount(msg.count, byRule);
       }
     });
     ws.addEventListener("close", () => {
@@ -12074,13 +12239,14 @@ const MahjongLobby = (function () {
 
   /**
    * オンライン人数の表示を購読する。呼んだ直後に(まだ値が無ければ null で)1回、
-   * 以後は値が変わるたびに cb が呼ばれる。表示用の接続がまだ無ければここで張る。
+   * 以後は値が変わるたびに cb(人数, ルールごとの人数 {full, half} | null) が呼ばれる。
+   * 表示用の接続がまだ無ければここで張る。
    * @returns {() => void} 購読解除(このリスナーが最後の1つなら接続も閉じる)
    */
   function watchOnlineCount(cb) {
     onlineCountListeners.add(cb);
     if (!onlineCountWs && !onlineCountRetryTimer) connectOnlineCountSocket();
-    cb(onlineCountValue);
+    cb(onlineCountValue, ruleCountsValue);
     return () => {
       onlineCountListeners.delete(cb);
       if (onlineCountListeners.size > 0) return;
@@ -12206,7 +12372,7 @@ const MahjongLobby = (function () {
         return b;
       };
       // 自動マッチング: 同じサーバーで相手を探している人と自動で組む
-      menuBtn("自動マッチング", () => startOnline("match", loadLastServerUrl(), null, loadLastPlayerName()), true);
+      menuBtn("自動マッチング", showMatchRuleSelect, true);
       // ルーム作成時は、先に持ち時間を決める画面を挟む
       menuBtn("ルームを作成", () => showRoomOptions(loadLastServerUrl(), loadLastPlayerName()));
       // ルームに参加: ルームコードは次の画面で入力する
@@ -12299,22 +12465,101 @@ const MahjongLobby = (function () {
       return { fieldset, read };
     }
 
-    /** ラジオボタンの選択欄(CPUの種類・起家など)。read() は選ばれた value を返す */
+    /**
+     * ラジオボタンの選択欄(CPUの種類・起家など)。read() は選ばれた value を返す。
+     * options の各要素は [value, 表示名, 説明文(省略可。選択肢の下に小さく出す)]
+     */
     function buildRadioField(legendText, options, initialValue) {
       const fieldset = el("fieldset", { className: "room-options-group" });
       fieldset.appendChild(el("legend", { textContent: legendText }));
       const name = "opt-" + Math.random().toString(36).slice(2);
-      const radios = options.map(([value, text]) => {
+      const radios = options.map(([value, text, note]) => {
         const label = el("label", { className: "room-options-choice" });
         const radio = el("input", { type: "radio", name, value });
         if (value === initialValue) radio.checked = true;
         label.appendChild(radio);
         label.appendChild(document.createTextNode(" " + text));
+        if (note) label.appendChild(el("span", { className: "room-options-note", textContent: note }));
         fieldset.appendChild(label);
         return radio;
       });
       if (!radios.some((r) => r.checked)) radios[0].checked = true;
       return { fieldset, read: () => (radios.find((r) => r.checked) || radios[0]).value };
+    }
+
+    /** 一荘戦・半荘戦の説明文(自動マッチングのルール選択・ルーム作成・CPU対戦の設定で共通) */
+    const GAME_LENGTH_NOTES = { full: "東〜北2局ずつの計8局", half: "東・南2局ずつの計4局" };
+
+    /** 対局の長さ(一荘戦/半荘戦)の選択欄 */
+    function buildGameLengthField(initialValue) {
+      return buildRadioField(
+        "対局",
+        [
+          ["full", "一荘戦", GAME_LENGTH_NOTES.full],
+          ["half", "半荘戦", GAME_LENGTH_NOTES.half],
+        ],
+        initialValue
+      );
+    }
+
+    /**
+     * 自動マッチングのルール選択画面。一荘戦・半荘戦のボタンの下に、説明文と、今そのルールで
+     * 対局中・相手待ちの人数(「接続数:n人」。サーバーの online-count の byRule)を出す。
+     * 同じルールを選んだ人とだけ組まれる。
+     */
+    function showMatchRuleSelect() {
+      root.innerHTML = "";
+      const wrap = el("div", { className: "lobby room-options options-screen match-rule-screen" });
+      wrap.appendChild(el("h2", { className: "room-options-title", textContent: "自動マッチング" }));
+      const fieldsBox = el("div", { className: "options-fields" });
+      const countEls = {};
+      for (const [value, text] of [
+        ["full", "一荘戦"],
+        ["half", "半荘戦"],
+      ]) {
+        const group = el("div", { className: "room-options-group match-rule-group" });
+        const btn = el("button", { type: "button", className: "btn btn-primary match-rule-btn", textContent: text });
+        btn.addEventListener("click", () =>
+          startOnline("match", loadLastServerUrl(), null, loadLastPlayerName(), undefined, { gameLength: value })
+        );
+        group.appendChild(btn);
+        group.appendChild(el("p", { className: "match-rule-note", textContent: GAME_LENGTH_NOTES[value] }));
+        countEls[value] = el("p", { className: "online-count match-rule-count", textContent: "接続数:-人" });
+        group.appendChild(countEls[value]);
+        fieldsBox.appendChild(group);
+      }
+      wrap.appendChild(fieldsBox);
+      const row = el("div", { className: "lobby-join-row" });
+      const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
+      backBtn.addEventListener("click", showLobby);
+      row.appendChild(backBtn);
+      wrap.appendChild(row);
+      root.appendChild(wrap);
+
+      const unsubscribe = watchOnlineCount((count, byRule) => {
+        for (const k of ["full", "half"]) {
+          countEls[k].textContent = `接続数:${byRule ? byRule[k] : "-"}人`;
+        }
+      });
+      new MutationObserver((mutations, observer) => {
+        if (!document.body.contains(wrap)) {
+          unsubscribe();
+          observer.disconnect();
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+    }
+
+    /**
+     * 対局(一荘戦/半荘戦)と起家の欄を1つの列にまとめる。スマホ横向きでは2つを縦に重ねて1列にし、
+     * 持ち時間などの欄の幅を確保する。縦向き・PC では列を無いものとして扱い(display: contents)、
+     * 対局・起家の順にほかの欄と同じく縦に並ぶ(styles.css の「一荘戦・半荘戦」)。showOptionsScreen の fields に渡せる形で返す。
+     */
+    function buildLengthDealerColumn(length, dealer) {
+      const col = el("div", { className: "options-col" });
+      dealer.fieldset.classList.add("room-options-dealer");
+      col.appendChild(length.fieldset);
+      col.appendChild(dealer.fieldset);
+      return { fieldset: col };
     }
 
     /** 設定画面の共通の枠(タイトル・エラー表示・決定/戻るボタン) */
@@ -12344,7 +12589,7 @@ const MahjongLobby = (function () {
     }
 
     /**
-     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
+     * ルーム作成前のオプション画面。対局の長さ(一荘戦/半荘戦)・持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
      * 決めた設定はルーム作成者(ホスト)から対局データと一緒に相手へ配られる。
      */
     function showRoomOptions(serverUrl, name) {
@@ -12366,7 +12611,8 @@ const MahjongLobby = (function () {
         ],
         loadRoomDealer()
       );
-      showOptionsScreen("ルームの設定", [time, spectate, dealer], "ルームを作成する", () => {
+      const length = buildGameLengthField(loadRoomGameLength());
+      showOptionsScreen("ルームの設定", [buildLengthDealerColumn(length, dealer), time, spectate], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
@@ -12374,12 +12620,14 @@ const MahjongLobby = (function () {
         saveAllowSpectate(allowSpectate);
         const dealerChoice = dealer.read();
         saveRoomDealer(dealerChoice);
-        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice });
+        const gameLength = length.read();
+        saveRoomGameLength(gameLength);
+        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice, gameLength });
         return null;
       });
     }
 
-    /** テストプレイ(CPU戦)の開始前のオプション画面。CPUの種類・持ち時間・起家を決める。 */
+    /** テストプレイ(CPU戦)の開始前のオプション画面。対局の長さ・CPUの種類・持ち時間・起家を決める。 */
     function showTestPlayOptions() {
       const last = loadTestPlayOptions();
       const cpu = buildRadioField(
@@ -12403,10 +12651,11 @@ const MahjongLobby = (function () {
         ],
         last.dealer
       );
-      showOptionsScreen("CPU対戦の設定", [cpu, time, dealer], "開始する", () => {
+      const length = buildGameLengthField(last.gameLength);
+      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), time, cpu], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
-        const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read() };
+        const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };
         saveTestPlayOptions(opts);
         const selfIsDealer = opts.dealer === "self" || (opts.dealer === "random" && Math.random() < 0.5);
         root.innerHTML = "";
@@ -12415,6 +12664,7 @@ const MahjongLobby = (function () {
           onExit: showLobby,
           cpuType: opts.cpuType,
           timeControl: opts.timeControl,
+          gameLength: opts.gameLength,
           humanSeat: selfIsDealer ? "east" : "south",
         });
         return null;
@@ -12581,13 +12831,16 @@ const MahjongLobby = (function () {
       const wrap = el("div", { className: "lobby room-options rules-view" });
       wrap.appendChild(el("h2", { className: "room-options-title", textContent: "ルール確認" }));
 
-      wrap.appendChild(el("h3", { className: "rules-section-title", textContent: "簡易ルール" }));
-      wrap.appendChild(el("pre", { className: "rules-text", textContent: SIMPLE_RULES_TEXT }));
+      // 文面だけをスクロールさせ、戻るボタンは常に下側に見えるようにする
+      const scroll = el("div", { className: "rules-scroll" });
+      scroll.appendChild(el("h3", { className: "rules-section-title", textContent: "簡易ルール" }));
+      scroll.appendChild(el("pre", { className: "rules-text", textContent: SIMPLE_RULES_TEXT }));
 
-      wrap.appendChild(el("h3", { className: "rules-section-title", textContent: "詳細ルール" }));
-      wrap.appendChild(el("pre", { className: "rules-text", textContent: DETAILED_RULES_TEXT }));
+      scroll.appendChild(el("h3", { className: "rules-section-title", textContent: "詳細ルール" }));
+      scroll.appendChild(el("pre", { className: "rules-text", textContent: DETAILED_RULES_TEXT }));
+      wrap.appendChild(scroll);
 
-      const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
+      const backBtn = el("button", { type: "button", className: "btn rules-back-btn", textContent: "戻る" });
       backBtn.addEventListener("click", showLobby);
       wrap.appendChild(backBtn);
       root.appendChild(wrap);
@@ -12904,6 +13157,7 @@ const MahjongLobby = (function () {
         allowSpectate: roomOptions.allowSpectate,
         timeControl,
         dealerChoice: roomOptions.dealerChoice,
+        gameLength: roomOptions.gameLength,
       });
       // 自動マッチングの相手待ちが長時間(既定5分)続いた場合に諦めてロビーへ戻るためのタイマー。
       // 相手が見つかった・キャンセルした・接続が切れた、いずれの場合も必ずクリアすること
@@ -12913,7 +13167,7 @@ const MahjongLobby = (function () {
       try {
         let result;
         if (mode === "match") {
-          // 相手が見つかるまでの待機画面(キャンセル可)
+          // 相手が見つかるまでの待機画面(ルール選択・ロビーに戻れる)
           controller.onMatchWaiting = () => {
             root.innerHTML = "";
             const wrap = el("div", { className: "lobby-waiting" });
@@ -12922,13 +13176,27 @@ const MahjongLobby = (function () {
             const hint = el("p", { className: "lobby-peer-status", textContent: "相手が見つかると自動的に対局が始まります。" });
             wrap.appendChild(hint);
             wrap.appendChild(buildOnlineCountRow((cb) => controller.watchOnlineCount(cb)));
-            const cancelBtn = el("button", { type: "button", className: "btn", textContent: "キャンセル" });
-            cancelBtn.addEventListener("click", () => {
-              clearTimeout(matchWaitTimer);
-              controller.cancelMatch();
-              showLobby();
-            });
-            wrap.appendChild(cancelBtn);
+            wrap.appendChild(
+              el("p", {
+                className: "lobby-peer-status",
+                textContent: `ルール: ${roomOptions.gameLength === "half" ? "半荘戦" : "一荘戦"}(${GAME_LENGTH_NOTES[roomOptions.gameLength === "half" ? "half" : "full"]})`,
+              })
+            );
+            const btnRow = el("div", { className: "lobby-join-row" });
+            for (const [text, next] of [
+              ["ルール選択に戻る", showMatchRuleSelect],
+              ["ロビーに戻る", showLobby],
+            ]) {
+              const b = el("button", { type: "button", className: "btn", textContent: text });
+              b.dataset.sound = "cancel"; // 戻るボタンと同じ音
+              b.addEventListener("click", () => {
+                clearTimeout(matchWaitTimer);
+                controller.cancelMatch();
+                next();
+              });
+              btnRow.appendChild(b);
+            }
+            wrap.appendChild(btnRow);
             root.appendChild(wrap);
 
             clearTimeout(matchWaitTimer);
@@ -12956,6 +13224,7 @@ const MahjongLobby = (function () {
           timeControl: timeControl !== undefined ? timeControl : DEFAULT_TIME_CONTROL,
           // ルーム作成時に選んだ起家の決め方(ホストだけが使う。自動マッチングはホストが起家)
           dealerChoice: roomOptions.dealerChoice,
+          gameLength: roomOptions.gameLength,
         });
       } catch (err) {
         clearTimeout(matchWaitTimer);

@@ -159,6 +159,40 @@ test("北2局(8局目)を終えると対局終了し、供託は起家が受け�
   assert.strictEqual(ended.riichiSticks, 0);
 });
 
+test("半荘戦: 南2局(4局目)を終えると対局終了し、供託は起家が受け取る。南1局の後は南2局へ進む", () => {
+  const last = gameState({
+    totalRounds: 4,
+    roundWind: "south",
+    roundNumber: 2,
+    overallRoundIndex: 4,
+    dealer: "south",
+    riichiSticks: 1,
+    roundEndReason: { type: "ron", winner: "east", loser: "south" },
+  });
+  const ended = advanceRound(last, false, 4);
+  assert.strictEqual(ended.phase, "game_end");
+  assert.deepStrictEqual(ended.gameEndReason, { type: "all_rounds_complete", riichiBonus: { seat: "east", points: 1000 } });
+
+  // 親が和了・聴牌(連荘)ならオーラスでも続く
+  const cont = advanceRound(last, true, 4);
+  assert.strictEqual(cont.phase, "draw");
+  assert.strictEqual(cont.roundWind, "south");
+  assert.strictEqual(cont.roundNumber, 2);
+
+  // 南1局 → 南2局、東2局 → 南1局(半荘戦でも途中は一荘戦と同じ)
+  const s1 = advanceRound(gameState({ totalRounds: 4, roundWind: "south", roundNumber: 1, overallRoundIndex: 3, roundEndReason: { type: "exhaustive_draw" } }), false, 4);
+  assert.strictEqual(s1.phase, "draw");
+  assert.deepStrictEqual([s1.roundWind, s1.roundNumber, s1.overallRoundIndex], ["south", 2, 4]);
+  const e2 = advanceRound(gameState({ totalRounds: 4, roundWind: "east", roundNumber: 2, overallRoundIndex: 2, roundEndReason: { type: "exhaustive_draw" } }), false, 4);
+  assert.deepStrictEqual([e2.roundWind, e2.roundNumber], ["south", 1]);
+});
+
+test("一荘戦では南2局の後も西1局へ進む", () => {
+  const next = advanceRound(gameState({ roundWind: "south", roundNumber: 2, overallRoundIndex: 4, roundEndReason: { type: "exhaustive_draw" } }), false, 4);
+  assert.strictEqual(next.phase, "draw");
+  assert.deepStrictEqual([next.roundWind, next.roundNumber], ["west", 1]);
+});
+
 test("持ち点がマイナスになった時点で対局終了(トビ)", () => {
   const state = gameState({ roundEndReason: { type: "tsumo", winner: "east" } });
   state.players.south = { ...state.players.south, score: -1000 };

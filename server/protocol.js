@@ -15,7 +15,8 @@ const { RoomRegistry } = require("./roomRegistry");
  * create/join/rejoin/match には protocol: 2 を付ける(付いていない古いアプリは受け付けない)。
  *
  * メッセージ一覧(クライアント → サーバー):
- *   create {name, allowSpectate, timeControl, dealerChoice} ルーム作成 → created {code, seat, token, protocol}
+ *   create {name, allowSpectate, timeControl, dealerChoice, gameLength} ルーム作成 → created {code, seat, token, protocol}
+ *                                           (gameLength: "full" = 一荘戦 8局 / "half" = 半荘戦 4局。省略時は一荘戦)
  *                                           (allowSpectate: 観戦を許可するか。省略時は許可。
  *                                            timeControl: {perAction, bank}(秒)か null。dealerChoice: 起家
  *                                            "self"(作成者)| "opponent" | "random")
@@ -27,7 +28,8 @@ const { RoomRegistry } = require("./roomRegistry");
  *                                           action-rejected {message} と今の game {payload}
  *                                           (action の形は gameSession.js の apply() を参照)
  *   leave                     退出       → 相手に peer-left、ルーム破棄
- *   match  {name, clientId}   自動マッチング → 相手がいなければ match-waiting、
+ *   match  {name, clientId, gameLength} 自動マッチング(同じ gameLength の人とだけ組む)
+ *                             → 相手がいなければ match-waiting、
  *                                           揃えば両者に matched {code, seat, token} と ready {names}
  *                                           (clientId は同一端末からの再試行を自分自身との
  *                                            マッチングとして扱わないための識別子。省略可)
@@ -154,6 +156,7 @@ function handleClientMessage(registry, conn, msg) {
       allowSpectate: msg.allowSpectate !== false,
       timeControl: normalizeTimeControl(msg.timeControl),
       dealerChoice: ["self", "opponent", "random"].includes(msg.dealerChoice) ? msg.dealerChoice : "self",
+      gameLength: msg.gameLength,
     });
     conn.send({ type: "created", code, seat: "east", token, protocol: PROTOCOL_VERSION });
     return;
@@ -217,7 +220,7 @@ function handleClientMessage(registry, conn, msg) {
       conn.send({ type: "error", message: "既にルームに参加しています。" });
       return;
     }
-    const result = registry.enqueueMatch(conn, normalizePlayerName(msg.name), normalizeClientId(msg.clientId));
+    const result = registry.enqueueMatch(conn, normalizePlayerName(msg.name), normalizeClientId(msg.clientId), msg.gameLength);
     if (!result) {
       conn.send({ type: "match-waiting" });
       return;

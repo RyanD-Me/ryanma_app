@@ -79,13 +79,16 @@ export interface GameState {
   /** 局終了理由(進行中はnull) */
   roundEndReason: RoundEndReason | null;
 
-  /** 一荘戦は固定で8局(東南西北 各2局) */
-  readonly totalRounds: 8;
+  /**
+   * 対局の長さ。8 = 一荘戦(東南西北 各2局の計8局)、4 = 半荘戦(東・南 各2局の計4局)。
+   * 最後の場風(一荘戦は北、半荘戦は南)の2局目を終えると対局終了(連荘中は続く)。
+   */
+  readonly totalRounds: 4 | 8;
   startingScore: number;
 
   /**
    * 対局が終了した理由。
-   * - all_rounds_complete: 8局すべて終えた
+   * - all_rounds_complete: 全局(一荘戦は8局、半荘戦は4局)を終えた
    * - bust: いずれかのプレイヤーの持ち点がマイナスになった(トビ、即終了)
    */
   gameEndReason:

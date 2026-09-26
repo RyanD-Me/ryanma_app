@@ -55,6 +55,11 @@ function randomToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
+/** 対局の長さ("full" = 一荘戦 8局 / "half" = 半荘戦 4局)。不正値は一荘戦 */
+function normalizeGameLength(v) {
+  return v === "half" ? "half" : "full";
+}
+
 function otherSeat(seat) {
   return seat === "east" ? "south" : "east";
 }
@@ -124,7 +129,9 @@ class RoomRegistry {
      * 「対戦相手が退室しました」と伝えるために、猶予時間と同じ間だけ覚えておく。
      */
     this.leftRooms = new Map();
-    /** 自動マッチングの待ち行列(先に来た順)。要素は {conn, name} */
+    /** 人数(ルールごとの対局中・相手待ちの人数)が変わった時に呼ぶ(server.js が全員へ知らせる) */
+    this.onCountsChanged = options.onCountsChanged || null;
+    /** 自動マッチングの待ち行列(先に来た順)。要素は {conn, name, clientId, gameLength}。同じルールどうしで組む */
     this.matchQueue = [];
     /** 観戦中の conn -> code の逆引き */
     this.spectatorInfo = new Map();
@@ -151,24 +158,29 @@ class RoomRegistry {
    * @returns {null | {code: string, players: Array<{conn: object, seat: string, token: string}>}}
    *   null なら待ち行列に入った(相手待ち)
    */
-  enqueueMatch(conn, name, clientId) {
+  enqueueMatch(conn, name, clientId, gameLength) {
     if (this.isQueued(conn)) return null;
-    const waiting = this.matchQueue[0];
+    const gl = normalizeGameLength(gameLength);
+    // 同じルール(一荘戦/半荘戦)で待っている人とだけ組む
+    const idx = this.matchQueue.findIndex((e) => e.gameLength === gl);
+    const waiting = idx >= 0 ? this.matchQueue[idx] : null;
     if (waiting && clientId && waiting.clientId === clientId) {
       // 同じ端末からの再試行: 古い(切れているはずの)接続を新しい接続に差し替えるだけで、
-      // 相手待ちの順番(先頭)はそのまま保つ。
-      this.matchQueue[0] = { conn, name: name || null, clientId };
+      // 相手待ちの順番はそのまま保つ。
+      this.matchQueue[idx] = { conn, name: name || null, clientId, gameLength: gl };
+      this._countsChanged();
       return null;
     }
-    this.matchQueue.shift();
     if (!waiting) {
-      this.matchQueue.push({ conn, name: name || null, clientId: clientId || null });
+      this.matchQueue.push({ conn, name: name || null, clientId: clientId || null, gameLength: gl });
+      this._countsChanged();
       return null;
     }
+    this.matchQueue.splice(idx, 1);
     const newcomer = { conn, name: name || null, clientId: clientId || null };
     const [eastP, southP] = this.random() < 0.5 ? [waiting, newcomer] : [newcomer, waiting];
     // 自動マッチングは東西をランダムに決め、east 席が起家になる(=起家もランダム)。持ち時間は既定
-    const { code, token: eastToken } = this.createRoom(eastP.conn, eastP.name, { dealerChoice: "self" });
+    const { code, token: eastToken } = this.createRoom(eastP.conn, eastP.name, { dealerChoice: "self", gameLength: gl });
     const { seat, token: southToken } = this.joinRoom(code, southP.conn, southP.name);
     return {
       code,
@@ -183,13 +195,30 @@ class RoomRegistry {
   cancelMatch(conn) {
     const before = this.matchQueue.length;
     this.matchQueue = this.matchQueue.filter((e) => e.conn !== conn);
-    return this.matchQueue.length !== before;
+    const removed = this.matchQueue.length !== before;
+    if (removed) this._countsChanged();
+    return removed;
+  }
+
+  /** ルールごとの、対局中(ルームに着席して接続中)と自動マッチングの相手待ちの人数 {full, half} */
+  ruleCounts() {
+    const counts = { full: 0, half: 0 };
+    for (const room of this.rooms.values()) {
+      const gl = normalizeGameLength(room.settings && room.settings.gameLength);
+      for (const s of SEATS) if (room.conns[s]) counts[gl]++;
+    }
+    for (const e of this.matchQueue) counts[normalizeGameLength(e.gameLength)]++;
+    return counts;
+  }
+
+  _countsChanged() {
+    if (this.onCountsChanged) this.onCountsChanged();
   }
 
   /**
    * 新しいルームを作成し、conn を east 家として着席させる。
-   * @param {{allowSpectate?: boolean, timeControl?: object|null, dealerChoice?: string}} [options]
-   *   観戦を許可するか(省略時は許可)・持ち時間・起家の決め方(対局を始める時に使う)
+   * @param {{allowSpectate?: boolean, timeControl?: object|null, dealerChoice?: string, gameLength?: string}} [options]
+   *   観戦を許可するか(省略時は許可)・持ち時間・起家の決め方・対局の長さ(対局を始める時に使う)
    * @returns {{code: string, token: string}} 発行されたルームコードと再接続用トークン
    */
   createRoom(conn, name, options = {}) {
@@ -204,7 +233,11 @@ class RoomRegistry {
       tokens: { east: token, south: null },
       names: { east: name || null, south: null },
       session: null,
-      settings: { timeControl: options.timeControl, dealerChoice: options.dealerChoice },
+      settings: {
+        timeControl: options.timeControl,
+        dealerChoice: options.dealerChoice,
+        gameLength: normalizeGameLength(options.gameLength),
+      },
       graceTimers: { east: null, south: null },
       createdAt: Date.now(),
       allowSpectate: options.allowSpectate !== false,
@@ -213,6 +246,7 @@ class RoomRegistry {
       delayedView: null,
     });
     this.connInfo.set(conn, { code, seat: "east" });
+    this._countsChanged();
     return { code, token };
   }
 
@@ -236,6 +270,7 @@ class RoomRegistry {
     room.tokens[openSeat] = token;
     room.names[openSeat] = name || null;
     this.connInfo.set(conn, { code, seat: openSeat });
+    this._countsChanged();
     return { seat: openSeat, token };
   }
 
@@ -249,6 +284,7 @@ class RoomRegistry {
     room.session = new GameSession({
       timeControl: room.settings.timeControl,
       dealerChoice: room.settings.dealerChoice,
+      gameLength: room.settings.gameLength,
       random: this.random,
       setTimer: this.setTimer,
       clearTimer: this.clearTimer,
@@ -357,6 +393,7 @@ class RoomRegistry {
     this.connInfo.set(conn, { code, seat });
     const peer = room.conns[otherSeat(seat)];
     safeSend(peer, { type: "peer-online" });
+    this._countsChanged();
     return { seat, names: this.namesFor(code), lastGame: room.session ? room.session.viewFor(seat) : null, peerConnected: !!peer };
   }
 
@@ -423,6 +460,7 @@ class RoomRegistry {
     safeSend(peer, { type: "peer-offline" });
     if (room.graceTimers[info.seat]) this.clearTimer(room.graceTimers[info.seat]);
     room.graceTimers[info.seat] = this.setTimer(() => this._expireSeat(info.code, info.seat), this.graceMs);
+    this._countsChanged();
   }
 
   /**
@@ -484,6 +522,7 @@ class RoomRegistry {
       if (room.conns[s]) this.connInfo.delete(room.conns[s]);
     }
     this.rooms.delete(code);
+    this._countsChanged();
   }
 
   // ---------------- 観戦 ----------------
@@ -577,4 +616,4 @@ class RoomRegistry {
   }
 }
 
-module.exports = { RoomRegistry, randomRoomCode, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS, SPECTATOR_DELAY_MS };
+module.exports = { RoomRegistry, normalizeGameLength, randomRoomCode, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS, SPECTATOR_DELAY_MS };

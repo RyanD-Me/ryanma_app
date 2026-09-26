@@ -6,6 +6,8 @@ const E = MahjongEngine;
 
 /** 和了(ツモ/ロン)表示を、出してから自動的に消すまでの時間(ミリ秒) */
 const WIN_BANNER_DURATION_MS = 1500;
+/** 最後の打牌から「流局」を表示するまでの待ち(ミリ秒)。サーバーの EXHAUSTIVE_DRAW_DELAY_MS と合わせる */
+const EXHAUSTIVE_DRAW_DELAY_MS = 500;
 /** ポン・カン・リーチ表示を、出してから自動的に消すまでの時間(ミリ秒) */
 const CALL_BANNER_DURATION_MS = 1200;
 /** リーチ後にツモ切りしか選べない場合、自動で切るまでの待ち時間(ミリ秒) */
@@ -1035,6 +1037,8 @@ class MahjongApp {
    */
   constructor(root, options = {}) {
     this.root = root;
+    // 対局の長さ: "full" = 一荘戦(東〜北2局ずつの計8局) / "half" = 半荘戦(東・南2局ずつの計4局)
+    this.gameLength = options.gameLength === "half" ? "half" : "full";
     // 画面の向きが変わったら、縦向き用/横向き用のレイアウトを描き直す。
     // 卓が破棄された(root から外れた)後は自分で登録を解除する。
     if (LANDSCAPE_PHONE_MQ && LANDSCAPE_PHONE_MQ.addEventListener) {
@@ -1179,7 +1183,7 @@ class MahjongApp {
       currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
-      totalRounds: 8,
+      totalRounds: this.gameLength === "half" ? 4 : 8,
       startingScore: 45000,
       gameEndReason: null,
     };
@@ -1502,6 +1506,18 @@ class MahjongApp {
   }
 
   computeCallOptions(seat, discardTile) {
+    const { canRon, canPon, canMinkan } = this.rawCallOptions(seat, discardTile);
+    // 「鳴き無し」中はポン・カンを最初から無かったことにする。こうすることで、
+    // 選択肢が出ないだけでなく autoAdvance() 側でも自動的にスルーされる
+    // (ロンだけは通常どおり残る)。
+    if (this.isNoCallFor(seat)) {
+      return { canRon, canPon: false, canMinkan: false };
+    }
+    return { canRon, canPon, canMinkan };
+  }
+
+  /** 「鳴き無し」を考えない、実際にロン・ポン・カンができるか */
+  rawCallOptions(seat, discardTile) {
     const player = this.state.players[seat];
     const context = E.buildWinContext(this.state, seat, discardTile, false);
     const canRon = E.canDeclareRon(
@@ -1526,12 +1542,6 @@ class MahjongApp {
       this.state.wall.liveWall.length,
       this.state.kanCount
     );
-    // 「鳴き無し」中はポン・カンを最初から無かったことにする。こうすることで、
-    // 選択肢が出ないだけでなく autoAdvance() 側でも自動的にスルーされる
-    // (ロンだけは通常どおり残る)。
-    if (this.isNoCallFor(seat)) {
-      return { canRon, canPon: false, canMinkan: false };
-    }
     return { canRon, canPon, canMinkan };
   }
 
@@ -1561,6 +1571,19 @@ class MahjongApp {
 
       if (this.state.phase === "draw") {
         if (this.state.wall.liveWall.length === 0) {
+          // 最後の打牌の直後にすぐ「流局」と出さず、少し(EXHAUSTIVE_DRAW_DELAY_MS)待ってから流局にする
+          const key = this.roundKey();
+          if (this._exhaustiveDelayKey !== key) {
+            this._exhaustiveDelayKey = key;
+            this._exhaustiveReadyKey = null;
+            setTimeout(() => {
+              if (this._destroyed || this._exhaustiveDelayKey !== key) return;
+              this._exhaustiveReadyKey = key;
+              if (this.state && this.state.phase === "draw" && this.roundKey() === key) this.render();
+            }, EXHAUSTIVE_DRAW_DELAY_MS);
+            break;
+          }
+          if (this._exhaustiveReadyKey !== key) break;
           this.snapshotPreResultScores();
           const outcome = E.resolveExhaustiveDraw(this.state);
           this.state = outcome.state;
@@ -1826,6 +1849,10 @@ class MahjongApp {
     if (advanced) this.afterAutoAdvance();
     // 持ち時間: 局・判断の切り替わりを反映してから描画する(表示に残り時間を出すため)
     this.syncTurnTimer();
+    // 結果画面が出るまでの供託の表示用に、局の途中の本数を覚えておく
+    if (this.state && this.state.phase !== "round_end" && this.state.phase !== "game_end") {
+      this._lastPlayRiichiSticks = this.state.riichiSticks;
+    }
     this.root.innerHTML = "";
     this.root.appendChild(this.renderTable());
     this.appendExitConfirm();
@@ -2179,7 +2206,7 @@ class MahjongApp {
     [
       [`${windLabel(this.state.roundWind)}${this.state.roundNumber}局`, "round-badge"],
       [`山 残り${this.state.wall.liveWall.length}枚`, ""],
-      [`供託 ${this.state.riichiSticks}本`, ""],
+      [`供託 ${this.displayedRiichiSticks()}本`, ""],
     ].forEach(([text, cls], i) => {
       if (i > 0) roundInfo.appendChild(document.createTextNode(" "));
       const span = document.createElement("span");
@@ -2273,7 +2300,7 @@ class MahjongApp {
 
     const scoreEl = document.createElement("span");
     scoreEl.className = "table-center-seat-score";
-    scoreEl.textContent = `${this.state.players[seat].score}点`;
+    scoreEl.textContent = `${this.displayedScore(seat)}点`;
     wrap.appendChild(scoreEl);
     return wrap;
   }
@@ -2953,6 +2980,30 @@ class MahjongApp {
     if (wrap) this.applyTurnTimerDisplay(wrap, rem);
   }
 
+  /**
+   * 結果画面(和了・流局のボックス)がまだ出ていない間か。和了・流局の直後は、ツモ/ロンや「流局」の
+   * 大きい文字だけを見せている。この間は、卓の点数・供託の表示をその局の結果が出る前の値のままにする。
+   */
+  isResultPending() {
+    const s = this.state;
+    if (!s || (s.phase !== "round_end" && s.phase !== "game_end")) return false;
+    return this.isWinRevealing() || this.isExhaustiveDrawRevealing();
+  }
+
+  /** 卓に表示する点数。点数のやり取りは結果画面が出てから見せる(それまではその局の増減を引いた値) */
+  displayedScore(seat) {
+    const score = this.state.players[seat].score;
+    const change = this.roundScoreChange;
+    if (this.isResultPending() && change && typeof change[seat] === "number") return score - change[seat];
+    return score;
+  }
+
+  /** 卓に表示する供託の本数(結果画面が出るまでは、局の結果が出る前の本数) */
+  displayedRiichiSticks() {
+    if (this.isResultPending() && this._lastPlayRiichiSticks != null) return this._lastPlayRiichiSticks;
+    return this.state.riichiSticks;
+  }
+
   snapshotPreResultScores() {
     if (!this.state || !this.state.players) return;
     this._preResultScores = { east: this.state.players.east.score, south: this.state.players.south.score };
@@ -3215,7 +3266,7 @@ class MahjongApp {
       addLine(
         reason && reason.type === "bust"
           ? `${this.seatLabel(reason.bustedPlayer)}家がトビました`
-          : "全8局が終了しました",
+          : `全${this.state.totalRounds || 8}局が終了しました`,
         "result-heading"
       );
       addLine("対局終了", "result-main");
@@ -3977,6 +4028,7 @@ function applyBoardScale() {
   const height = window.innerHeight;
   if (width < BOARD_SCALE_MIN_WIDTH) {
     shell.style.zoom = "";
+    shell.style.setProperty("--shell-zoom", "1");
     return;
   }
   // PC の対局画面は、卓を広げたときの基準サイズで拡大率を決める
@@ -3990,6 +4042,8 @@ function applyBoardScale() {
   // 1倍未満(縦に短い横向きスマートフォンなど)では拡大も縮小もしない
   const zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
   if (shell.style.zoom !== zoom) shell.style.zoom = zoom;
+  // 画面の高さに合わせる要素(ルール確認など)が、拡大した分を割り戻して高さを決められるようにする
+  shell.style.setProperty("--shell-zoom", zoom || "1");
 }
 
 window.addEventListener("resize", applyBoardScale);

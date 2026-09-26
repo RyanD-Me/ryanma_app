@@ -216,7 +216,11 @@ test("結果画面は両者の確認か、一定時間で次の局へ進む", ()
   let guard = 0;
   while (session.state.phase !== "round_end" && guard++ < 500) {
     const d = session.pendingDecision();
-    if (!d) break;
+    if (!d) {
+      timers.advance(600); // 流局前の待ち(0.5秒)など
+      if (!session.pendingDecision()) break;
+      continue;
+    }
     if (d.kind === "call") session.apply(d.seat, { type: "pass" });
     else session.apply(d.seat, { type: "discard", tileId: session.state.players[d.seat].drawnTile.id });
   }
@@ -340,7 +344,11 @@ test("持ち時間: 局が変わると局ごとの残り時間は満タンに戻
   let guard = 0;
   while (session.state.phase !== "round_end" && guard++ < 500) {
     const d = session.pendingDecision();
-    if (!d) break;
+    if (!d) {
+      timers.advance(600); // 流局前の待ち(0.5秒)など
+      if (!session.pendingDecision()) break;
+      continue;
+    }
     if (d.kind === "call") session.apply(d.seat, { type: "pass" });
     else session.apply(d.seat, { type: "discard", tileId: session.state.players[d.seat].drawnTile.id });
   }
@@ -366,4 +374,26 @@ test("見送りの待ちが入る設定(本番と同じ確率)でも、対局が
     assert.equal(session.state.phase, "game_end", `対局 ${g} が終わらなかった`);
     session.destroy();
   }
+});
+
+test("流局は最後の打牌から0.5秒待ってから(その間は局面が進まない)", () => {
+  const { session, timers } = newSession();
+  let guard = 0;
+  while (session.state.wall.liveWall.length > 0 || session.state.phase !== "draw") {
+    if (guard++ > 500 || session.state.phase === "round_end") break;
+    const d = session.pendingDecision();
+    if (!d) {
+      timers.advance(100);
+      continue;
+    }
+    if (d.kind === "call") session.apply(d.seat, { type: "pass" });
+    else session.apply(d.seat, { type: "discard", tileId: session.state.players[d.seat].drawnTile.id });
+  }
+  if (session.state.phase !== "draw") return; // 途中で和了した場合は対象外
+  assert.equal(session.state.wall.liveWall.length, 0);
+  timers.advance(400);
+  assert.equal(session.state.phase, "draw"); // まだ流局にしない
+  timers.advance(200);
+  assert.equal(session.state.phase, "round_end");
+  assert.equal(session.state.roundEndReason.type, "exhaustive_draw");
 });

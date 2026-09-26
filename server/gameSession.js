@@ -44,6 +44,8 @@ const TIME_ALLOWANCE_MS = 2000;
 const PASS_DELAY_CHANCE = 1 / 7;
 /** そのときの待ち時間(ミリ秒)の範囲 */
 const PASS_DELAY_MIN_MS = 700;
+/** 最後の打牌から流局にするまでの待ち(ミリ秒)。フロントの EXHAUSTIVE_DRAW_DELAY_MS と合わせる */
+const EXHAUSTIVE_DRAW_DELAY_MS = 500;
 const PASS_DELAY_MAX_MS = 1800;
 
 /** 暗号用の乱数(0以上1未満)。牌山のシャッフルと、見送りの待ちを入れるかどうかに使う(予測されないように) */
@@ -81,6 +83,8 @@ class GameSession {
   constructor(options = {}) {
     this.timeControl = normalizeTimeControl(options.timeControl === undefined ? { perAction: 5, bank: 20 } : options.timeControl);
     this.dealerChoice = ["self", "opponent", "random"].includes(options.dealerChoice) ? options.dealerChoice : "self";
+    /** 対局の長さ: "full" = 一荘戦(東〜北 計8局)、"half" = 半荘戦(東・南 計4局) */
+    this.gameLength = options.gameLength === "half" ? "half" : "full";
     this.random = options.random || Math.random;
     this.setTimer = options.setTimer || ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer || ((t) => clearTimeout(t));
@@ -104,7 +108,9 @@ class GameSession {
     this.version = 0;
     this._callSeq = 0;
     this._dealPending = false;
-    this._timers = { deal: null, decision: null, result: null, pass: null };
+    this._timers = { deal: null, decision: null, result: null, pass: null, exhaustive: null };
+    /** 流局にする前の待ち {round, done} */
+    this._exhaustiveDelay = null;
     /** いま時間を計っている判断 {seat, kind, round, turn, startedAt, bankAtStart} */
     this._decisionKey = null;
     /** 各家の「局ごと」の残り時間(ミリ秒)と、それを数えている局 */
@@ -149,7 +155,7 @@ class GameSession {
       currentTurn: dealer,
       lastDiscard: null,
       roundEndReason: null,
-      totalRounds: 8,
+      totalRounds: this.gameLength === "half" ? 4 : 8,
       startingScore: 45000,
       gameEndReason: null,
     };
@@ -377,6 +383,21 @@ class GameSession {
       const s = this.state;
       if (s.phase === "draw") {
         if (s.wall.liveWall.length === 0) {
+          // 最後の打牌の直後にすぐ流局にせず、少し待ってから流局にする(画面で最後の捨て牌を見せるため)
+          const round = s.roundSerial;
+          if (!this._exhaustiveDelay || this._exhaustiveDelay.round !== round) {
+            this._exhaustiveDelay = { round, done: false };
+            this._clearTimer("exhaustive");
+            this._timers.exhaustive = this.setTimer(() => {
+              this._timers.exhaustive = null;
+              if (this.destroyed || !this._exhaustiveDelay || this._exhaustiveDelay.round !== round) return;
+              this._exhaustiveDelay.done = true;
+              this._afterChange();
+              this.onUpdate();
+            }, EXHAUSTIVE_DRAW_DELAY_MS);
+            break;
+          }
+          if (!this._exhaustiveDelay.done) break;
           this._snapshotPreResultScores();
           const outcome = E.resolveExhaustiveDraw(s);
           this.state = outcome.state;
@@ -586,6 +607,7 @@ class GameSession {
       rematchVotes: this.rematchVotes,
       timeControl: this.timeControl,
       dealerChoice: this.dealerChoice,
+      gameLength: this.gameLength,
       lastAction: this.lastAction,
       version: this.version,
       serverAuthoritative: true,
