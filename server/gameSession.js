@@ -43,7 +43,7 @@ const TIME_ALLOWANCE_MS = 2000;
 /** 相手が鳴けない捨て牌でも、この確率でランダムな時間だけ待ってから進める */
 const PASS_DELAY_CHANCE = 1 / 7;
 /** そのときの待ち時間(ミリ秒)の範囲 */
-const PASS_DELAY_MIN_MS = 700;
+const PASS_DELAY_MIN_MS = 300;
 /** 最後の打牌から流局にするまでの待ち(ミリ秒)。フロントの EXHAUSTIVE_DRAW_DELAY_MS と合わせる */
 const EXHAUSTIVE_DRAW_DELAY_MS = 500;
 const PASS_DELAY_MAX_MS = 1800;

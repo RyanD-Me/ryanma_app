@@ -280,9 +280,9 @@ test("鳴けない捨て牌でも、ときどき待ってから見送る(その�
   assert.equal(session.pendingDecision(), null);
   assert.equal(session.viewFor(turn).state.phase, "call_window");
   assert.throws(() => session.apply(other, { type: "pass" })); // 待ちの間は誰も操作できない
-  timers.advance(600);
-  assert.equal(session.state.phase, "call_window"); // 最短 0.7秒
-  timers.advance(1300); // 最長 1.8秒
+  timers.advance(250);
+  assert.equal(session.state.phase, "call_window"); // 最短 0.3秒
+  timers.advance(1600); // 最長 1.8秒
   // 待ち終わると見送って、相手のツモに進む
   assert.equal(session.state.phase, "discard");
   assert.equal(session.state.currentTurn, other);
