@@ -505,15 +505,17 @@ test("観戦: 対局データは3分遅れで届く(3分より新しい局面は
   assert.equal(host.received.at(-1).type, "game");
   assert.ok(!viewer.received.some((m) => m.type === "game"));
 
-  // 3分経つと、その時点の局面から順に届く(観戦者には両者の手牌を見せ、牌山は伏せる)
+  // 3分経つと、その時点の局面から順に届く(牌山は伏せる)。対局者がまだ同じ局を打っているので、
+  // 両者の手牌も伏せて届く(別の端末で自分の対局を観戦して、相手の手牌を知れないように)
   registry.runTimersEqual(SPECTATOR_DELAY_MS);
   const games = viewer.received.filter((m) => m.type === "game").map((m) => m.payload);
   assert.ok(games.length >= 2);
   assert.ok(games[0].version <= versionAtStart);
   assert.equal(games.at(-1).version, session.version);
   const g = games.at(-1);
-  assert.ok(g.state.players.east.hand.every((t) => t.kind !== null));
-  assert.ok(g.state.players.south.hand.every((t) => t.kind !== null));
+  assert.equal(g.spectatorHandsHidden, true);
+  assert.ok(g.state.players.east.hand.every((t) => t.kind === null));
+  assert.ok(g.state.players.south.hand.every((t) => t.kind === null));
   assert.ok(g.state.wall.liveWall.every((t) => t.kind === null));
 
   // 後から来た観戦者には、遅らせた後の最新の局面が入室時に届く
@@ -711,4 +713,66 @@ test("ルームコードは暗号用の乱数で作る(Math.random を使わな�
   } finally {
     Math.random = orig;
   }
+});
+
+test("観戦: 対局者が次の局に進んだ後に届く前の局の局面は、両者の手牌を公開する", () => {
+  const registry = timerRegistry();
+  const { host, guest, code, session } = startedRoom(registry);
+  const viewer = fakeConn("viewer");
+  handleClientMessage(registry, viewer, { type: "spectate", code });
+  const turn = session.state.currentTurn;
+  const conn = turn === "east" ? host : guest;
+  handleClientMessage(registry, conn, { type: "action", action: { type: "discard", tileId: session.state.players[turn].drawnTile.id } });
+  const roundBefore = session.roundKey();
+  // 局が終わって次の局へ進んだことにする(3分経つ前)
+  session.state = Object.assign({}, session.state, { phase: "round_end", roundEndReason: { type: "exhaustive_draw" } });
+  session.nextRound();
+  assert.notEqual(session.roundKey(), roundBefore);
+  registry.runTimersEqual(SPECTATOR_DELAY_MS);
+  const games = viewer.received.filter((m) => m.type === "game").map((m) => m.payload);
+  const prev = games.filter((v) => v.state.roundSerial === 1);
+  assert.ok(prev.length >= 1);
+  for (const v of prev) {
+    assert.ok(!v.spectatorHandsHidden);
+    assert.ok(v.state.players.east.hand.every((t) => t.kind !== null));
+    assert.ok(v.state.players.south.hand.every((t) => t.kind !== null));
+  }
+  // 今打っている局の局面は伏せたまま
+  const cur = games.filter((v) => v.state.roundSerial === session.state.roundSerial);
+  for (const v of cur) assert.equal(v.spectatorHandsHidden, true);
+});
+
+test("観戦: 結果画面(両者の手牌が公開された後)に届く同じ局の局面は伏せない", () => {
+  const registry = timerRegistry();
+  const { host, guest, code, session } = startedRoom(registry);
+  const viewer = fakeConn("viewer");
+  handleClientMessage(registry, viewer, { type: "spectate", code });
+  const turn = session.state.currentTurn;
+  const conn = turn === "east" ? host : guest;
+  handleClientMessage(registry, conn, { type: "action", action: { type: "discard", tileId: session.state.players[turn].drawnTile.id } });
+  session.state = Object.assign({}, session.state, { phase: "round_end", roundEndReason: { type: "exhaustive_draw" } });
+  registry.runTimersEqual(SPECTATOR_DELAY_MS);
+  const g = viewer.received.filter((m) => m.type === "game").at(-1).payload;
+  assert.ok(!g.spectatorHandsHidden);
+  assert.ok(g.state.players.east.hand.every((t) => t.kind !== null));
+});
+
+test("プレイヤー名: 見えない文字は取り除き、文字の向きを変える記号は閉じて名前の中に閉じ込める", () => {
+  const { normalizePlayerName: n } = require("./protocol");
+  assert.equal(n("  たろう  "), "たろう");
+  assert.equal(n("山田　太郎"), "山田　太郎"); // 全角スペースは使える
+  assert.equal(n("た​ろ​う"), "たろう"); // ゼロ幅スペース
+  assert.equal(n("﻿a­b\u{E0041}c\n\td"), "abcd"); // BOM・ソフトハイフン・タグ文字・改行・タブ
+  assert.equal(n("​ㅤ⠀"), null); // 見えない文字だけ → 既定の名前
+  assert.equal(n("a    b"), "a b");
+  assert.equal(n("👨‍👩‍👧"), "👨‍👩‍👧"); // 絵文字をつなぐゼロ幅接合子は残す
+  assert.equal(n("a‍b"), "ab");
+  assert.equal(n("a" + "\u0301".repeat(30) + "b"), "\u00E1\u0301\u0301\u0301b"); // 結合文字は3つまで(先頭の1つは á にまとまる)
+  assert.equal(n("あ".repeat(30)), "あ".repeat(20));
+  // 向きの記号: 閉じていないものは閉じ、名前全体を FSI … PDI で囲む。対応しない閉じ記号は捨てる
+  assert.equal(n("abc‮def"), "⁨abc‮def‬⁩");
+  assert.equal(n("⁦abc"), "⁨⁦abc⁩⁩");
+  assert.equal(n("‬abc‬"), "abc");
+  assert.equal(n("abc‏"), "⁨abc‏⁩");
+  assert.equal(n(123), null);
 });

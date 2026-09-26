@@ -49,12 +49,105 @@ const { RoomRegistry } = require("./roomRegistry");
  *   spectate-ended {message}(観戦中の対局が終了・破棄された)
  */
 
-/** プレイヤー名を、表示・中継してよい形に正規化する(前後空白除去・最大20文字・不正値は null)。 */
+/** プレイヤー名の最大文字数(見える文字で数える) */
+const MAX_NAME_LENGTH = 20;
+
+// 文字の向きを変える記号(許可する)。埋め込み・上書き(PDF で閉じる)と、分離(PDI で閉じる)と、向きの目印
+const BIDI_EMBED_OPEN = "\u202A\u202B\u202D\u202E"; // LRE RLE LRO RLO
+const BIDI_PDF = "\u202C";
+const BIDI_ISOLATE_OPEN = "\u2066\u2067\u2068"; // LRI RLI FSI
+const BIDI_PDI = "\u2069";
+const BIDI_MARKS = "\u200E\u200F\u061C"; // LRM RLM ALM
+const BIDI_ALLOWED = new Set([...BIDI_EMBED_OPEN, BIDI_PDF, ...BIDI_ISOLATE_OPEN, BIDI_PDI, ...BIDI_MARKS]);
+/** 右から左に書く文字(アラビア文字・ヘブライ文字など)。名前の外側の文字の並びに影響しうる */
+const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFC]/u;
+/**
+ * 見えない文字(使用禁止)。制御文字・書式文字(ゼロ幅スペース・BOM・ソフトハイフン・タグ文字など)・行/段落区切り、
+ * 空白に見えるが文字として扱われるもの(ハングルの埋め草・点字の空白など)。文字の向きを変える記号と、
+ * 絵文字どうしをつなぐゼロ幅接合子は別に扱う。
+ */
+const INVISIBLE_CHAR = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u115F\u1160\u3164\uFFA0\u2800\u034F\u17B4\u17B5\u180B-\u180F]/u;
+const EXT_PICT = /\p{Extended_Pictographic}/u;
+
+/**
+ * プレイヤー名を、表示・中継してよい形に正規化する。
+ * - 見えない文字は取り除く(使用禁止)。絵文字どうしをつなぐゼロ幅接合子(家族の絵文字など)だけは残す。
+ * - 特殊な空白は普通の空白にし(全角スペースはそのまま)、続く空白は1つにまとめる。結合文字(濁点など)は1文字につき3つまで
+ *   (大量に重ねて上下にはみ出す表示を防ぐ)。
+ * - 文字の向きを変える記号は許可するが、閉じていないものは名前の末尾で閉じ、名前全体を分離
+ *   (FSI … PDI)で囲んで、名前の外側(「○○家の…」などの前後の文字)の並びが崩れないようにする。
+ * - 前後の空白を除き、見える文字で最大20文字。見える文字が残らなければ null(既定の名前になる)。
+ */
 function normalizePlayerName(rawName) {
   if (typeof rawName !== "string") return null;
-  const trimmed = rawName.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, 20);
+  const chars = Array.from(rawName.normalize("NFC"));
+  const kept = [];
+  let marks = 0;
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (BIDI_ALLOWED.has(c)) {
+      kept.push(c);
+      continue;
+    }
+    if (c === "\u200D") {
+      // ゼロ幅接合子は、絵文字(と異体字セレクタ)のあとに絵文字が続くときだけ残す
+      const prev = kept.filter((k) => !BIDI_ALLOWED.has(k)).at(-1) || "";
+      const prevBase = prev === "\uFE0F" ? kept.filter((k) => !BIDI_ALLOWED.has(k)).at(-2) || "" : prev;
+      if (EXT_PICT.test(prevBase) && EXT_PICT.test(chars[i + 1] || "")) kept.push(c);
+      continue;
+    }
+    if (INVISIBLE_CHAR.test(c)) continue;
+    if (/\p{Zs}/u.test(c)) {
+      // 全角スペースはそのまま、ほかの特殊な空白は普通の空白に。空白が続くときは最初の1つだけ残す
+      const last = kept[kept.length - 1];
+      if (kept.length && last !== " " && last !== "\u3000") kept.push(c === "\u3000" ? c : " ");
+      marks = 0;
+      continue;
+    }
+    if (/\p{M}/u.test(c)) {
+      if (++marks > 3) continue;
+    } else {
+      marks = 0;
+    }
+    kept.push(c);
+  }
+  // 前後の空白を除き、見える文字で20文字まで(向きの記号は数えない)
+  while (kept.length && (kept[0] === " " || kept[0] === "\u3000")) kept.shift();
+  const out = [];
+  let visible = 0;
+  for (const c of kept) {
+    if (!BIDI_ALLOWED.has(c) && c !== "\u200D" && !/\p{M}/u.test(c)) {
+      if (visible >= MAX_NAME_LENGTH) break;
+      visible++;
+    }
+    out.push(c);
+  }
+  while (out.length && (out[out.length - 1] === " " || out[out.length - 1] === "\u3000")) out.pop();
+  if (!out.some((c) => !BIDI_ALLOWED.has(c) && c !== " " && c !== "\u3000" && c !== "\u200D" && !/\p{M}/u.test(c))) return null;
+  // 向きの記号の対応をとる(対応しない閉じ記号は捨て、閉じていないものは末尾で閉じる)
+  const stack = [];
+  const balanced = [];
+  for (const c of out) {
+    if (BIDI_EMBED_OPEN.includes(c)) {
+      stack.push(BIDI_PDF);
+    } else if (BIDI_ISOLATE_OPEN.includes(c)) {
+      stack.push(BIDI_PDI);
+    } else if (c === BIDI_PDF) {
+      if (stack[stack.length - 1] !== BIDI_PDF) continue;
+      stack.pop();
+    } else if (c === BIDI_PDI) {
+      if (!stack.includes(BIDI_PDI)) continue;
+      // 分離を閉じると、その内側の埋め込みも閉じる
+      while (stack.length && stack[stack.length - 1] !== BIDI_PDI) balanced.push(stack.pop());
+      stack.pop();
+    }
+    balanced.push(c);
+  }
+  while (stack.length) balanced.push(stack.pop());
+  const name = balanced.join("").trim();
+  // 向きの記号や右から左に書く文字を含む名前は、全体を分離で囲んで外側の文字に影響しないようにする
+  const needsIsolate = balanced.some((c) => BIDI_ALLOWED.has(c)) || RTL_CHAR.test(name);
+  return needsIsolate ? `\u2068${name}\u2069` : name;
 }
 
 function normalizeCode(raw) {
@@ -269,4 +362,4 @@ function handleClientMessage(registry, conn, msg) {
   conn.send({ type: "error", message: `不明なメッセージ種別です: ${msg.type}` });
 }
 
-module.exports = { handleClientMessage, RoomRegistry, PROTOCOL_VERSION };
+module.exports = { handleClientMessage, RoomRegistry, PROTOCOL_VERSION, normalizePlayerName };
