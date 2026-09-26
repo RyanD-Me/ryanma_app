@@ -47,7 +47,7 @@ index.html            公開用(= frontend/index-ws.html のコピー。npm run 
 npm install          # typescript と ws
 npm run release      # ビルド一式(tsc → bundle → html)+ 直下の index.html を更新 ← 公開前に必ずこれ
 npm run dev          # ビルド一式(frontend/index-ws.html まで)
-npm test             # tsc + エンジン/サーバーのテスト(2026-09-26 時点で 177 件すべて成功)
+npm test             # tsc + エンジン/サーバーのテスト(2026-09-26 時点で 196 件すべて成功)
 npm run server       # 中継サーバーをローカルで起動(既定 8080。PORT で変更)
 ```
 
@@ -143,7 +143,7 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   ロンできる場合は選択肢を出す)。サーバーは鳴ける捨て牌では判断を待つので、送らないと対局が止まる(2026-09-26 に修正)。
 - 相手の捨て牌の判断中(`call_window`)でも、ロン・ポン・カンのどれもできなければボタン(「スルー」も)を出さない
   (サーバーが鳴けない捨て牌でわざと待つことがあるため)。
-- 通信方式の版は `protocol: 2`(`WS_PROTOCOL_VERSION` / `PROTOCOL_VERSION`)。古いページは「アプリが古いため…」、
+- 通信方式の版は `protocol: 3`(`WS_PROTOCOL_VERSION` / `PROTOCOL_VERSION`)。古いページは「アプリが古いため…」、
   古いサーバーに新しいページで接続すると「サーバーが古いバージョンのため対戦できません」と出る。
 - 対局の長さ: create/match に `gameLength`("full" | "half"、省略は一荘戦)を付けて送る。サーバーが `GameSession` に渡し、
   対局データにも `gameLength` が入る(ルームの待機画面の表示用)。
@@ -158,6 +158,21 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   マッチング成立時に先に入ったルームが片付けられずに残り続けていた。2026-09-26 のセキュリティ確認で修正)。
 - プレイヤー名はサーバーで正規化する(`protocol.js` の `normalizePlayerName`): 見えない文字は禁止(取り除く。絵文字をつなぐゼロ幅接合子だけ残す)、
   結合文字は1文字につき3つまで、文字の向きを変える記号は許可するが閉じていないものを閉じ、名前全体を FSI…PDI で囲んで外側の表示を崩さない。
+- **アカウント(第1段階。仕様は `docs/account-spec.md`)**: 通信方式は `protocol: 3`。接続したら最初に `hello {sessionToken, clientId}` で名乗り、
+  サーバーが名前を決める(ログイン中はアカウント名、ゲストは自分で決めた名前(localStorage `mahjong_guest_name`、hello の guestName)か
+  「Playern」に「(ゲスト)」を付けたもの(ゲストはオプション画面で名前を直接変えられる)。create/join/match でクライアントが送る名前は使わない)。「(ゲスト)」で終わるユーザー名は禁止。
+  `WsRoomController` は hello の返事を待ってから本来の要求を送る。ゲストはルーム作成・牌譜を使えない(ロビーのボタンも出さない)。
+  - 登録・ログイン・削除・メールアドレス変更は共通の流れ: `auth-start` → Firebase の「メールアドレス確認メール」
+    (送るたびにアドレスを未確認に戻す)→ リンクで Firebase の標準のページが開いて確認済みになり、「続行」で公開ページが `?rid=…&v=…` で開く
+    (確認ページ `showVerifyPage`。v はメールの中にだけ書く合言葉)→ サーバーが v と確認済みの状態を確かめ6桁の認証コードを表示
+    → 元の画面で `auth-complete` に入力。アクション URL を公開ページにした場合の `?mode=verifyEmail&oobCode=…` にも対応。
+    ローカル(鍵なし)ではログに出る `/dev/verify?oob=…` を開くと「標準のページで押した」ことになる。
+    受付(rid と始めた端末だけが知る secret)はサーバーのメモリ上(30分)、端末では localStorage `mahjong_auth_pending`(読み込み直しても続きから)。
+  - サーバー: `accounts.js`(流れ・検査)/ `accountStore.js`(Firestore のデータ。テストは `MemoryDocStore`)/ `authMailer.js` /
+    `firebaseClient.js`(追加パッケージなしの REST)。鍵は Render の環境変数 `FIREBASE_SERVICE_ACCOUNT`(無いとメモリ上+偽メールで動く)。
+    `/health/firebase` で接続確認。
+  - クライアント: `ws.js` の `MahjongAccount`(トークン localStorage `mahjong_session_token`・名前 `mahjong_identity`・アカウント操作用の
+    一時的な接続)と、ロビーの「ユーザー登録・ログイン」/「アカウント」画面(`showAccount` ほか)。プライバシーポリシーは `PRIVACY_POLICY_TEXT`。
 - 再接続: 座席トークンで5分以内なら同じ座席に戻れる。自動マッチングの自己マッチ防止に端末ID(localStorage `mahjong_ws_client_id`)。
 - 観戦: ロビー「観戦」から一覧(局・点数・観戦人数)またはルームコードで観戦。両者の手牌を公開表示、観戦者は操作不可。
   **観戦は3分遅れ**(覗き見・通し対策)。さらに、対局者がまだ打っている局の局面は両者の手牌を伏せて配る

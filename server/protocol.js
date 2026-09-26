@@ -42,6 +42,20 @@ const { RoomRegistry } = require("./roomRegistry");
  *                                           失敗時は spectate-failed {message}
  *   stop-spectate             観戦をやめる
  *   ping                      生存確認   → pong
+ * アカウント(docs/account-spec.md。reqId を付けて送ると、返事にも同じ reqId が付く。失敗は account-error {op, message, reason}):
+ *   hello {sessionToken, clientId, guestName}  接続の最初に名乗る → hello-ok {guest, name, sessionInvalid, guestNameError}
+ *                                        (create/join/match の名前はここで決まる。ゲストは自分で決めた名前か「Playern」に
+ *                                         「(ゲスト)」を付けたもの。ゲストはルーム作成不可)
+ *   guest-rename {name}                  ゲストの名前を決める → guest-renamed {name, baseName}(端末に baseName を保存し、以後 hello で送る)
+ *   auth-start {mode, name, email, transferCode}  mode: register | login | delete(ログイン中) | email(メールアドレス変更)
+ *                                        → 確認メールを送り auth-started {rid, secret, email(一部伏せ字), resendAfterMs}
+ *   auth-resend {rid, secret}            メールを送り直す → auth-resent
+ *   auth-verify {rid, v, oobCode}        確認ページから(リンクの戻り先の合言葉 v、またはリンクの oobCode)→ auth-code {code, requestedAt, mode}
+ *   auth-complete {rid, secret, code}    認証コードを入力 → auth-done {token, name} | {deleted: true}
+ *   account-info                         → account-info {name, email, nameChangeAvailableAt}
+ *   account-rename {name}                → account-renamed {name}
+ *   transfer-issue                       引継ぎコードの発行 → transfer-code {code, expiresAt}
+ *   logout {sessionToken}                → logged-out
  * サーバー → クライアントの通知: peer-offline(相手が切断、再接続待ち) / peer-online /
  *   peer-left {reason: "left"(相手が退室) | "timeout"(相手の再接続の猶予切れ)}
  * rejoin-failed {reason}: reason が "peer-left" なら、自分の切断中に相手が退室していた。
@@ -166,8 +180,11 @@ function normalizeClientId(raw) {
   return trimmed.slice(0, 100);
 }
 
-/** 対応しているクライアントの通信方式の版。これより古いアプリ(対局データを自分で送る方式)は受け付けない */
-const PROTOCOL_VERSION = 2;
+/**
+ * 対応しているクライアントの通信方式の版。これより古いアプリは受け付けない。
+ * 3: 接続したら最初に hello で名乗る(ログイン中のアカウント/ゲスト)。create/join/match の名前はサーバーが決める。
+ */
+const PROTOCOL_VERSION = 3;
 const OUTDATED_CLIENT_MESSAGE = "アプリが古いため接続できません。ページを再読み込みしてください。";
 
 function isCurrentClient(msg) {
@@ -179,6 +196,134 @@ function normalizeTimeControl(raw) {
   if (raw === null) return null;
   if (raw && Number.isInteger(raw.perAction) && Number.isInteger(raw.bank)) return { perAction: raw.perAction, bank: raw.bank };
   return undefined;
+}
+
+/**
+ * create/join/match で使う名前。アカウント機能が有効なサーバー(registry.accounts がある)では、接続の最初に
+ * hello で名乗った名前(ログイン中のアカウント名/ゲストの名前)を使い、クライアントが送る名前は使わない。
+ * アカウント機能が無い(テスト等)場合は、これまでどおり送られてきた名前を使う。
+ * @returns {{name: string|null, guest: boolean} | {error: string}}
+ */
+function identityOf(registry, conn, msg) {
+  if (!registry.accounts) return { name: normalizePlayerName(msg.name), guest: false };
+  if (!conn.identity) return { error: "接続の準備ができていません。ページを再読み込みしてください。" };
+  return { name: normalizePlayerName(conn.identity.name), guest: conn.identity.guest };
+}
+
+/** アカウント関係のメッセージ(非同期に処理して、reqId を付けて返事する) */
+const ACCOUNT_MESSAGES = new Set([
+  "hello",
+  "auth-start",
+  "auth-resend",
+  "auth-verify",
+  "auth-complete",
+  "guest-rename",
+  "account-info",
+  "account-rename",
+  "transfer-issue",
+  "logout",
+]);
+
+async function handleAccountMessage(registry, conn, msg) {
+  const accounts = registry.accounts;
+  const reply = (obj) => conn.send(Object.assign({ reqId: msg.reqId }, obj));
+  const fail = (err) =>
+    reply({ type: "account-error", op: msg.type, message: (err && err.message) || "エラーが起きました。", reason: (err && err.reason) || null });
+  if (!accounts) {
+    fail(new Error("このサーバーではアカウント機能を使えません。"));
+    return;
+  }
+  const accountId = conn.identity && !conn.identity.guest ? conn.identity.accountId : null;
+  const needLogin = () => {
+    if (!accountId) throw Object.assign(new Error("ログインしていません。"), { reason: "account" });
+  };
+  try {
+    switch (msg.type) {
+      case "hello": {
+        const id = await accounts.identify({
+          sessionToken: msg.sessionToken,
+          clientId: normalizeClientId(msg.clientId),
+          guestName: typeof msg.guestName === "string" ? msg.guestName.slice(0, 100) : undefined,
+        });
+        conn.identity = { guest: id.guest, name: id.name, accountId: id.accountId };
+        reply({
+          type: "hello-ok",
+          guest: id.guest,
+          name: id.name,
+          guestNameError: id.guestNameError || null,
+          // 自動ログインのトークンが送られてきたのに無効だった(削除・メール変更などで)。クライアントは消してよい
+          sessionInvalid: !!msg.sessionToken && id.guest,
+          protocol: PROTOCOL_VERSION,
+        });
+        return;
+      }
+      case "auth-start": {
+        const r = await accounts.startAuth(
+          { mode: msg.mode, name: msg.name, email: msg.email, transferCode: msg.transferCode, accountId },
+          conn.ip || conn
+        );
+        reply(Object.assign({ type: "auth-started" }, r));
+        return;
+      }
+      case "auth-resend": {
+        const r = await accounts.resend({ rid: msg.rid, secret: msg.secret });
+        reply(Object.assign({ type: "auth-resent" }, r));
+        return;
+      }
+      case "guest-rename": {
+        if (accountId) throw Object.assign(new Error("ログイン中の名前は「名前を変更」から変えてください。"), { reason: "account" });
+        const r = accounts.guestRename(msg.name);
+        conn.identity = Object.assign({}, conn.identity, { guest: true, name: r.name });
+        reply(Object.assign({ type: "guest-renamed" }, r));
+        return;
+      }
+      case "auth-verify": {
+        const r = await accounts.verifyLink({ rid: msg.rid, oobCode: msg.oobCode, v: msg.v });
+        reply(Object.assign({ type: "auth-code" }, r));
+        return;
+      }
+      case "auth-complete": {
+        const r = await accounts.completeAuth({ rid: msg.rid, secret: msg.secret, code: msg.code });
+        if (r.deleted) {
+          conn.identity = null;
+        } else if (r.token) {
+          const acc = await accounts.store.getSessionAccount(r.token);
+          if (acc) conn.identity = { guest: false, name: acc.name, accountId: acc.id };
+        }
+        reply(Object.assign({ type: "auth-done" }, r));
+        return;
+      }
+      case "account-info": {
+        needLogin();
+        reply(Object.assign({ type: "account-info" }, await accounts.accountInfo(accountId)));
+        return;
+      }
+      case "account-rename": {
+        needLogin();
+        const r = await accounts.rename(accountId, msg.name);
+        conn.identity = Object.assign({}, conn.identity, { name: r.name });
+        reply(Object.assign({ type: "account-renamed" }, r));
+        return;
+      }
+      case "transfer-issue": {
+        needLogin();
+        reply(Object.assign({ type: "transfer-code" }, await accounts.issueTransferCode(accountId)));
+        return;
+      }
+      case "logout": {
+        await accounts.logout(msg.sessionToken);
+        conn.identity = null;
+        reply({ type: "logged-out" });
+        return;
+      }
+    }
+  } catch (err) {
+    if (err && err.reason !== undefined) {
+      fail(err);
+      return;
+    }
+    throw err;
+  }
 }
 
 function handleClientMessage(registry, conn, msg) {
@@ -197,6 +342,13 @@ function handleClientMessage(registry, conn, msg) {
   if (registry.isQueued(conn) && ["create", "join", "rejoin", "spectate"].includes(msg.type)) {
     const text = "自動マッチングの相手待ち中です。";
     conn.send(msg.type === "spectate" ? { type: "spectate-failed", message: text } : { type: msg.type === "rejoin" ? "rejoin-failed" : "error", message: text });
+    return;
+  }
+
+  if (ACCOUNT_MESSAGES.has(msg.type)) {
+    handleAccountMessage(registry, conn, msg).catch(() => {
+      conn.send({ type: "account-error", op: msg.type, reqId: msg.reqId, message: "サーバーでエラーが起きました。しばらくしてからお試しください。" });
+    });
     return;
   }
 
@@ -252,7 +404,16 @@ function handleClientMessage(registry, conn, msg) {
       conn.send({ type: "error", message: "既にルームに参加しています。" });
       return;
     }
-    const name = normalizePlayerName(msg.name);
+    const who = identityOf(registry, conn, msg);
+    if (who.error) {
+      conn.send({ type: "error", message: who.error });
+      return;
+    }
+    if (who.guest) {
+      conn.send({ type: "error", message: "ルームを作成するにはユーザー登録(ログイン)が必要です。" });
+      return;
+    }
+    const name = who.name;
     const { code, token } = registry.createRoom(conn, name, {
       allowSpectate: msg.allowSpectate !== false,
       timeControl: normalizeTimeControl(msg.timeControl),
@@ -273,7 +434,12 @@ function handleClientMessage(registry, conn, msg) {
       conn.send({ type: "error", message: "ルームコードを指定してください。" });
       return;
     }
-    const name = normalizePlayerName(msg.name);
+    const who = identityOf(registry, conn, msg);
+    if (who.error) {
+      conn.send({ type: "error", message: who.error });
+      return;
+    }
+    const name = who.name;
     try {
       const { seat, token } = registry.joinRoom(code, conn, name);
       conn.send({ type: "joined", code, seat, token, protocol: PROTOCOL_VERSION });
@@ -321,7 +487,12 @@ function handleClientMessage(registry, conn, msg) {
       conn.send({ type: "error", message: "既にルームに参加しています。" });
       return;
     }
-    const result = registry.enqueueMatch(conn, normalizePlayerName(msg.name), normalizeClientId(msg.clientId), msg.gameLength);
+    const who = identityOf(registry, conn, msg);
+    if (who.error) {
+      conn.send({ type: "error", message: who.error });
+      return;
+    }
+    const result = registry.enqueueMatch(conn, who.name, normalizeClientId(msg.clientId), msg.gameLength);
     if (!result) {
       conn.send({ type: "match-waiting" });
       return;

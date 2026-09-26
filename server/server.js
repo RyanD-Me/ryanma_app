@@ -39,6 +39,60 @@ const spectatorDelayMs = Number.isFinite(Number(process.env.SPECTATOR_DELAY_MS))
   : undefined;
 const registry = new RoomRegistry({ spectatorDelayMs });
 
+// ---------------- アカウント機能(docs/account-spec.md) ----------------
+// 環境変数 FIREBASE_SERVICE_ACCOUNT(サーバー用の鍵の JSON)があれば Firebase を使う。無ければ動作確認用に
+// メモリ上に保存し、メールは送らずにリンクをログに出す(サーバーを止めるとデータは消える)。
+const { AccountService } = require("./accounts");
+const { AccountStore, MemoryDocStore } = require("./accountStore");
+const { FirebaseAuthMailer, FakeAuthMailer } = require("./authMailer");
+const { FirebaseClient } = require("./firebaseClient");
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "ryanma-8be54";
+// ウェブ API キーは公開ページにも埋め込む前提の値(秘密ではない)
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || "AIzaSyCLqqKRjV_YsyP_uh4ktYq7Ja_lNGrSQbI";
+/** メールのリンクの戻り先(公開ページ) */
+const PUBLIC_URL = process.env.PUBLIC_URL || "https://ryand-me.github.io/ryanma_app/";
+let firebaseClient = null;
+let accountMode = "memory";
+try {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    firebaseClient = new FirebaseClient({ projectId: sa.project_id || FIREBASE_PROJECT_ID, apiKey: FIREBASE_API_KEY, serviceAccount: sa });
+    accountMode = "firebase";
+  }
+} catch (e) {
+  console.error("FIREBASE_SERVICE_ACCOUNT を読めませんでした(JSON の形を確認してください)");
+}
+registry.accounts = new AccountService({
+  store: new AccountStore({ docs: firebaseClient || new MemoryDocStore() }),
+  mailer: firebaseClient
+    ? new FirebaseAuthMailer({ client: firebaseClient })
+    : new FakeAuthMailer({
+        onSend: ({ email, link, oobCode, continueUrl }) => {
+          console.log(`[動作確認用] ${email} 宛てのログイン用リンク: ${link}`);
+          console.log(`[動作確認用] ${email} 宛て(標準のページ経由): http://localhost:${PORT}/dev/verify?oob=${oobCode} を開いた後、続行: ${continueUrl}`);
+        },
+      }),
+  publicUrl: PUBLIC_URL,
+});
+if (!firebaseClient) console.log("アカウント機能: Firebase の鍵が無いため、メモリ上で動かします(動作確認用)");
+
+/** Firebase につながるかの確認結果(/health/firebase。1分間は同じ結果を返す) */
+let firebaseHealth = null;
+async function checkFirebase() {
+  if (!firebaseClient) return { mode: accountMode, ok: false, error: "no service account" };
+  if (firebaseHealth && firebaseHealth.at > Date.now() - 60000) return firebaseHealth.result;
+  let result;
+  try {
+    await firebaseClient.accessToken();
+    await firebaseClient.getDoc("meta/health");
+    result = { mode: accountMode, ok: true };
+  } catch (e) {
+    result = { mode: accountMode, ok: false, error: String((e && (e.code || e.message)) || e).slice(0, 100) };
+  }
+  firebaseHealth = { at: Date.now(), result };
+  return result;
+}
+
 const httpServer = http.createServer((req, res) => {
   // ホスティング先のヘルスチェック用に、素のHTTPリクエストにも簡単に応答しておく。
   if (req.url === "/health") {
@@ -48,6 +102,21 @@ const httpServer = http.createServer((req, res) => {
   }
   // 動いている版の確認用(自動デプロイで新しい版に入れ替わったかを外から確かめるため)。
   // commit は Render が自動で設定する環境変数 RENDER_GIT_COMMIT(デプロイしたコミット)。
+  // 動作確認用(Firebase の鍵が無いときだけ): 「Firebase の標準のページでリンクを押した」ことにする
+  if (!firebaseClient && req.url.startsWith("/dev/verify?")) {
+    const oob = new URL(req.url, "http://localhost").searchParams.get("oob");
+    const ok = registry.accounts.mailer.clickDefault(oob);
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(ok ? "メールアドレスを確認しました(動作確認用)" : "無効なリンクです");
+    return;
+  }
+  if (req.url === "/health/firebase") {
+    checkFirebase().then((r) => {
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(JSON.stringify(r));
+    });
+    return;
+  }
   if (req.url === "/version") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     res.end(
@@ -138,6 +207,7 @@ wss.on("connection", (ws, req) => {
     return;
   }
   connectionsPerIp.set(ip, ipCount + 1);
+  // アカウントの申し込みの回数制限は接続元ごとに数える
   let released = false;
   const releaseIp = () => {
     if (released) return;
@@ -148,6 +218,7 @@ wss.on("connection", (ws, req) => {
   };
 
   const conn = {
+    ip,
     send(obj) {
       if (ws.readyState !== ws.OPEN) return;
       ws.send(JSON.stringify(obj));

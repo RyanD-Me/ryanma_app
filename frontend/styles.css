@@ -1885,3 +1885,30 @@ h1, .round-badge, .log-title {
   /* 左の点数欄・右のボタン類と重ならないよう、真ん中の幅に収める(収まらなければ2行) */
   .spectator-hidden-notice { top: 4px; max-width: calc(100% - 300px); font-size: 0.68rem; line-height: 1.35; padding: 3px 10px; }
 }
+
+/* ---------------- アカウント(登録・ログイン・認証コード) ---------------- */
+.account-screen { gap: 10px; }
+.account-screen .account-text { margin: 0; font-size: 0.9rem; line-height: 1.6; }
+.account-screen .account-note { margin: 0; font-size: 0.78rem; opacity: 0.8; }
+.account-screen .account-warning { margin: 0; font-size: 0.8rem; color: var(--dragon-red); }
+.account-screen .account-input { width: 100%; box-sizing: border-box; text-transform: none; letter-spacing: normal; }
+.account-screen .account-code-input { font-size: 1.3rem; letter-spacing: 0.3em; text-align: center; max-width: 12em; }
+.account-screen .account-agree { font-size: 0.85rem; }
+.account-screen .account-buttons { flex-wrap: wrap; }
+.account-code-display {
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-align: center;
+  color: var(--gold);
+  padding: 8px 0;
+  user-select: all;
+}
+.account-code-display.account-transfer-code { font-size: 1.3rem; letter-spacing: 0.12em; }
+.settings-account-name { font-size: 1rem; }
+@media (max-height: 480px) and (orientation: landscape) {
+  .title-row:has(~ #app .account-screen) { display: none; }
+  .account-screen { gap: 6px; padding: 10px 16px; }
+  .account-screen .account-text { font-size: 0.8rem; line-height: 1.45; }
+  .account-code-display { font-size: 1.8rem; padding: 2px 0; }
+}

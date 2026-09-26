@@ -33,10 +33,31 @@
 | `roomRegistry.js` | ルーム・再接続・観戦・自動マッチング |
 | `gameSession.js` | 対局の進行(合法手の検査・伏せ牌にした局面の配信) |
 | `mahjong-engine.js` | 麻雀のエンジン(`npm run bundle` で `src/` から生成。手で編集しない) |
+| `accounts.js` | アカウント機能(登録・ログイン・認証コード・名前変更・削除・メールアドレス変更・ゲスト番号) |
+| `accountStore.js` | アカウントのデータの保存(Firestore) |
+| `authMailer.js` | ログイン用のメール(Firebase の確認メール)の送信とリンクの確認 |
+| `firebaseClient.js` | Firebase(Authentication・Firestore)の REST API を呼ぶ部品 |
 
 `*.test.js` はテスト用なのでデプロイ不要です。依存パッケージは `ws` だけです。
 ルール(`src/`)を変えたときは `npm run release`(または `npm run bundle`)で `mahjong-engine.js` を作り直し、
 サーバーも再デプロイしてください(サーバーとページのエンジンが食い違わないように)。
+
+## アカウント機能(Firebase)の設定
+
+仕様は `docs/account-spec.md`。Render の環境変数に次を設定します。
+
+| 環境変数 | 内容 |
+|---|---|
+| `FIREBASE_SERVICE_ACCOUNT` | **必須(秘密)**。Firebase のサービスアカウントの鍵(JSON ファイルの中身をそのまま)。リポジトリやチャットには貼らない |
+| `FIREBASE_API_KEY` | 省略可(既定は本番のウェブ API キー。公開してよい値) |
+| `FIREBASE_PROJECT_ID` | 省略可(既定 `ryanma-8be54`。鍵の `project_id` が優先) |
+| `PUBLIC_URL` | 省略可。ログイン用メールのリンクの戻り先(既定 `https://ryand-me.github.io/ryanma_app/`) |
+
+- `FIREBASE_SERVICE_ACCOUNT` が無いと、動作確認用にメモリ上で動きます(メールは送らず、リンクをログに出す。
+  サーバーを止めるとデータは消える)。ローカルでの確認は `PORT=8090 PUBLIC_URL=file:///…/index.html node server/server.js`。
+- `https://<サーバー>/health/firebase` で Firebase につながるかを確認できます(`{"mode":"firebase","ok":true}` なら正常)。
+- Firebase 側の設定: Authentication のメール/パスワードを有効、承認済みドメインに `ryand-me.github.io`、テンプレートの言語を日本語。
+  アクション URL は変えなくてよい(メールのリンク → Firebase の標準のページ →「続行」で公開ページに戻る)。
 
 ## 自動マッチングについて
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-JG1W+K0HNV7YIe6zD+vgXxqe6feS65O38gG4IHLPC+M=' 'sha256-HJQn2LEeYpYq0kN6HZzAbtZ6gPNzGge/stwuqf9YVHw=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-mPJ4BerETG01/VVj51NYC/3eyt2O3K9gYWwEB+XAcGg=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-3kCMPRHU0cDCBsbqd4HEZwspdt3XfQUFinpdsGfwApU=' 'sha256-HJQn2LEeYpYq0kN6HZzAbtZ6gPNzGge/stwuqf9YVHw=' 'sha256-tl+4oHexBwG770E08SRqo9L/WltA2Te1oygJULwiqr0=' 'sha256-gD1SRg58xBzH+Pz6+aD/mTDQ6rfRSYX23jDAcQcAzMc=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1895,6 +1895,33 @@ h1, .round-badge, .log-title {
 @media (max-height: 480px) and (orientation: landscape) {
   /* 左の点数欄・右のボタン類と重ならないよう、真ん中の幅に収める(収まらなければ2行) */
   .spectator-hidden-notice { top: 4px; max-width: calc(100% - 300px); font-size: 0.68rem; line-height: 1.35; padding: 3px 10px; }
+}
+
+/* ---------------- アカウント(登録・ログイン・認証コード) ---------------- */
+.account-screen { gap: 10px; }
+.account-screen .account-text { margin: 0; font-size: 0.9rem; line-height: 1.6; }
+.account-screen .account-note { margin: 0; font-size: 0.78rem; opacity: 0.8; }
+.account-screen .account-warning { margin: 0; font-size: 0.8rem; color: var(--dragon-red); }
+.account-screen .account-input { width: 100%; box-sizing: border-box; text-transform: none; letter-spacing: normal; }
+.account-screen .account-code-input { font-size: 1.3rem; letter-spacing: 0.3em; text-align: center; max-width: 12em; }
+.account-screen .account-agree { font-size: 0.85rem; }
+.account-screen .account-buttons { flex-wrap: wrap; }
+.account-code-display {
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-align: center;
+  color: var(--gold);
+  padding: 8px 0;
+  user-select: all;
+}
+.account-code-display.account-transfer-code { font-size: 1.3rem; letter-spacing: 0.12em; }
+.settings-account-name { font-size: 1rem; }
+@media (max-height: 480px) and (orientation: landscape) {
+  .title-row:has(~ #app .account-screen) { display: none; }
+  .account-screen { gap: 6px; padding: 10px 16px; }
+  .account-screen .account-text { font-size: 0.8rem; line-height: 1.45; }
+  .account-code-display { font-size: 1.8rem; padding: 2px 0; }
 }
 
 </style>
@@ -9273,9 +9300,12 @@ class CpuMahjongApp extends MahjongApp {
     return this.cpuSeat();
   }
 
-  /** テストプレイでは、自分の名前は「Player」、相手は型に応じて「CPU(○○型)」 */
+  /** CPU対戦では、自分の名前はアカウントの名前(ゲストは「○○(ゲスト)」)、相手は型に応じて「CPU(○○型)」 */
   playerName(seat) {
-    if (seat !== this.cpuSeat()) return "Player";
+    if (seat !== this.cpuSeat()) {
+      const name = typeof MahjongAccount !== "undefined" ? MahjongAccount.displayName() : null;
+      return name || "Player";
+    }
     const label = CPU_TYPE_LABELS[this.cpuType];
     return label ? `CPU(${label})` : "CPU";
   }
@@ -10481,6 +10511,8 @@ function saveKifuSettings(settings) {
 /** この種類の対局を牌譜に残すか(対局の開始時に確かめる)。観戦は残さない */
 function kifuRecordingEnabled(mode) {
   if (mode !== "cpu" && mode !== "online") return false;
+  // ゲスト(ログインなし)は牌譜を使えない
+  if (typeof MahjongAccount !== "undefined" && MahjongAccount.isGuest()) return false;
   return loadKifuSettings()[mode];
 }
 
@@ -11023,8 +11055,8 @@ window.ReplayMahjongApp = ReplayMahjongApp;
 
 /** 再接続のために保存しておく、直近のオンライン対局の情報(ページを再読み込みしても戻れるように) */
 const WS_SESSION_STORAGE_KEY = "mahjong_ws_session";
-/** サーバーとの通信方式の版(2: 対局をサーバーが進める方式)。server/protocol.js の PROTOCOL_VERSION と合わせる */
-const WS_PROTOCOL_VERSION = 2;
+/** サーバーとの通信方式の版(2: 対局をサーバーが進める方式、3: 接続の最初に hello で名乗る)。server/protocol.js の PROTOCOL_VERSION と合わせる */
+const WS_PROTOCOL_VERSION = 3;
 /** サーバー側で座席が予約される時間(server/roomRegistry.js の DEFAULT_RECONNECT_GRACE_MS)と揃える */
 const WS_RECONNECT_GRACE_MS = 5 * 60 * 1000;
 /** 再接続を試みる間隔(回数ごとに伸ばし、最大 WS_RECONNECT_MAX_DELAY_MS) */
@@ -11050,6 +11082,34 @@ const SIMPLE_RULES_TEXT = `・東〜北各2局の計8局または東・南各2�
 ・オーラスの親のテンパイ止め・アガリ止めなし
 ・一部役の翻数変更、追加役あり
 　(詳細ルールを参照)`;
+
+// ---------------- プライバシーポリシー(ユーザー登録の画面・アカウントの画面から表示) ----------------
+const PRIVACY_POLICY_TEXT = `二麻オンライン プライバシーポリシー
+
+1. 取得する情報
+・ユーザー登録するとき: ユーザー名、メールアドレス
+・遊ぶとき: 対局の結果・成績、接続元のIPアドレス(不正防止・混雑対策のために一時的に使い、保存しません)
+・端末に保存する情報: 自動ログインのための情報、設定、端末ごとのID(ゲスト番号・自動マッチングに使います)、牌譜
+
+2. 利用目的
+・ログインのため(登録したメールアドレスにログイン用のメールを送ります)
+・ゲーム内での名前・成績の表示、フレンドなどの機能のため
+・不正行為の防止と、サービスの運営のため
+
+3. 外部のサービスの利用
+情報の保存とメールの送信に、Google の Firebase を利用しています(情報は Google のサーバーに保存されます)。
+
+4. 他のプレイヤーに表示される情報
+ユーザー名・成績は他のプレイヤーに表示されます。メールアドレスは他のプレイヤーには表示されません。
+
+5. 第三者への提供
+法令に基づく場合を除き、本人の同意なく第三者に提供しません。
+
+6. 削除
+「ユーザー登録・ログイン」(ログイン中は「アカウント」)→「アカウントを削除」から、いつでも登録情報を削除できます。
+
+7. 変更
+この内容を変更するときは、このページでお知らせします。`;
 
 const DETAILED_RULES_TEXT = `【使用牌種】
 萬子の1〜9
@@ -11240,6 +11300,303 @@ function getOrCreateClientId() {
   return cachedClientId;
 }
 
+// ---------------- アカウント(docs/account-spec.md) ----------------
+/**
+ * ログイン状態と、アカウント関係のサーバーとのやり取り。
+ * - 自動ログインのトークンは localStorage(SESSION_TOKEN_KEY)。トークンがあれば「ログイン中」とみなす
+ *   (サーバーで無効と分かったら消す)。
+ * - 名前(ログイン中のアカウント名/ゲストの名前「○○(ゲスト)」)は、サーバーに名乗った結果(hello-ok)を覚えておく。
+ *   サーバーが起動に時間がかかる間も表示できるよう localStorage(IDENTITY_KEY)にも残す。
+ * - アカウントの操作は、必要な時だけ開く専用の接続で行い、使い終わったら数秒で閉じる。
+ */
+const MahjongAccount = (() => {
+  const SESSION_TOKEN_KEY = "mahjong_session_token";
+  const IDENTITY_KEY = "mahjong_identity";
+  const PENDING_KEY = "mahjong_auth_pending";
+  /** ゲストが自分で決めた名前(「(ゲスト)」を付ける前のもの)。名乗りのときに送る */
+  const GUEST_NAME_KEY = "mahjong_guest_name";
+  const REQUEST_TIMEOUT_MS = 90000; // サーバーが寝ている(起動に約1分)ときのために長め
+  const IDLE_CLOSE_MS = 1000;
+  let serverUrlFn = () => null;
+  const listeners = new Set();
+
+  function jstToday() {
+    return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+  function read(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+  function write(key, value) {
+    try {
+      if (value === null || value === undefined) localStorage.removeItem(key);
+      else localStorage.setItem(key, value);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  function readJson(key) {
+    try {
+      return JSON.parse(read(key) || "null");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function token() {
+    const t = read(SESSION_TOKEN_KEY);
+    return typeof t === "string" && t.length >= 20 ? t : null;
+  }
+
+  function identity() {
+    const id = readJson(IDENTITY_KEY);
+    if (!id || typeof id.name !== "string") return null;
+    // ゲストの番号は日付ごとなので、別の日の番号は使わない。ログイン状態と食い違うものも使わない
+    if (id.guest && id.date !== jstToday()) return null;
+    if (!!token() === !!id.guest) return null;
+    return id;
+  }
+
+  function emit() {
+    for (const cb of listeners) {
+      try {
+        cb();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  /** サーバーの hello-ok を反映する(どの接続で受け取ったものでもよい) */
+  function applyHello(msg) {
+    if (!msg || typeof msg.name !== "string") return;
+    if (msg.sessionInvalid) write(SESSION_TOKEN_KEY, null);
+    // 覚えていたゲストの名前が使えなくなっていた(規則が変わった等)
+    if (msg.guestNameError) write(GUEST_NAME_KEY, null);
+    write(IDENTITY_KEY, JSON.stringify({ guest: !!msg.guest, name: msg.name, date: jstToday() }));
+    emit();
+  }
+
+  /** 接続の最初に送る名乗り */
+  function helloMessage(reqId) {
+    const m = { type: "hello", protocol: WS_PROTOCOL_VERSION, clientId: getOrCreateClientId() };
+    const t = token();
+    if (t) m.sessionToken = t;
+    else {
+      const g = read(GUEST_NAME_KEY);
+      if (g) m.guestName = g;
+    }
+    if (reqId !== undefined) m.reqId = reqId;
+    return m;
+  }
+
+  /** ゲストの名前を覚える(サーバーが確かめた名前 baseName と、表示する名前 name) */
+  function setGuestName(baseName, name) {
+    write(GUEST_NAME_KEY, baseName || null);
+    if (name) {
+      write(IDENTITY_KEY, JSON.stringify({ guest: true, name, date: jstToday() }));
+    } else {
+      // 既定の名前に戻す: 名乗り直して「Playern(ゲスト)」を受け取る(次の操作で接続を開き直す)
+      write(IDENTITY_KEY, null);
+      closeSocket();
+    }
+    emit();
+  }
+
+  function setSession(newToken, name) {
+    const changed = newToken !== token();
+    write(SESSION_TOKEN_KEY, newToken);
+    write(IDENTITY_KEY, JSON.stringify({ guest: false, name, date: jstToday() }));
+    // ログイン状態が変わったら、アカウント用の接続は名乗り直す(次の操作で開き直す)
+    if (changed) setTimeout(closeSocket, 0);
+    emit();
+  }
+
+  function clearSession() {
+    write(SESSION_TOKEN_KEY, null);
+    write(IDENTITY_KEY, null);
+    setTimeout(closeSocket, 0);
+    emit();
+  }
+
+  // ---- アカウントの操作用の接続 ----
+  let ws = null;
+  let readyPromise = null;
+  let seq = 0;
+  const waiting = new Map(); // reqId -> {resolve, reject, timer}
+  let idleTimer = null;
+
+  function closeSocket() {
+    clearTimeout(idleTimer);
+    const old = ws;
+    ws = null;
+    readyPromise = null;
+    if (old) {
+      try {
+        old.close();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  function scheduleIdleClose() {
+    clearTimeout(idleTimer);
+    if (waiting.size === 0) idleTimer = setTimeout(closeSocket, IDLE_CLOSE_MS);
+  }
+
+  function failAll(message) {
+    for (const [id, w] of waiting) {
+      clearTimeout(w.timer);
+      w.reject(new Error(message));
+      waiting.delete(id);
+    }
+  }
+
+  /** 接続して名乗るまで(名乗りの返事 hello-ok が届くまで)待つ */
+  function ensureOpen() {
+    if (readyPromise) return readyPromise;
+    readyPromise = new Promise((resolve, reject) => {
+      const url = serverUrlFn();
+      let sock;
+      try {
+        sock = new WebSocket(url);
+      } catch (e) {
+        readyPromise = null;
+        reject(new Error("サーバーに接続できませんでした。"));
+        return;
+      }
+      ws = sock;
+      const helloId = ++seq;
+      const timer = setTimeout(() => {
+        if (ws === sock) closeSocket();
+        reject(new Error("サーバーに接続できませんでした(時間切れ)。"));
+      }, REQUEST_TIMEOUT_MS);
+      sock.addEventListener("open", () => sock.send(JSON.stringify(helloMessage(helloId))));
+      sock.addEventListener("message", (ev) => {
+        if (ws !== sock) return;
+        let msg;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch (e) {
+          return;
+        }
+        if (!msg || typeof msg.type !== "string") return;
+        if (msg.reqId === helloId) {
+          clearTimeout(timer);
+          if (msg.type === "hello-ok") {
+            applyHello(msg);
+            resolve();
+          } else {
+            reject(new Error(msg.message || "サーバーに接続できませんでした。"));
+          }
+          return;
+        }
+        const w = msg.reqId !== undefined ? waiting.get(msg.reqId) : null;
+        if (!w) return;
+        waiting.delete(msg.reqId);
+        clearTimeout(w.timer);
+        if (msg.type === "account-error" || msg.type === "error") {
+          const err = new Error(msg.message || "エラーが起きました。");
+          err.reason = msg.reason || null;
+          w.reject(err);
+        } else {
+          w.resolve(msg);
+        }
+        scheduleIdleClose();
+      });
+      const lost = () => {
+        if (ws !== sock) return;
+        clearTimeout(timer);
+        ws = null;
+        readyPromise = null;
+        reject(new Error("サーバーとの接続が切れました。"));
+        failAll("サーバーとの接続が切れました。もう一度お試しください。");
+      };
+      sock.addEventListener("close", lost);
+      sock.addEventListener("error", lost);
+    });
+    return readyPromise;
+  }
+
+  /** サーバーにアカウントの操作を頼み、返事を待つ(失敗は例外。message は利用者に見せてよい文言) */
+  async function request(msg) {
+    clearTimeout(idleTimer);
+    await ensureOpen();
+    const reqId = ++seq;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waiting.delete(reqId);
+        reject(new Error("サーバーから返事がありませんでした。"));
+        scheduleIdleClose();
+      }, REQUEST_TIMEOUT_MS);
+      waiting.set(reqId, { resolve, reject, timer });
+      try {
+        ws.send(JSON.stringify(Object.assign({}, msg, { reqId })));
+      } catch (e) {
+        waiting.delete(reqId);
+        clearTimeout(timer);
+        reject(new Error("サーバーに送れませんでした。"));
+      }
+    });
+  }
+
+  /** いまの名前をサーバーに確かめる(自動ログインの確認・ゲスト番号の取得) */
+  async function refresh() {
+    await ensureOpen();
+    scheduleIdleClose();
+    return identity();
+  }
+
+  // ---- 認証の途中(メールのリンクを押して戻ってくるまで)の受付 ----
+  function savePending(p) {
+    write(PENDING_KEY, p ? JSON.stringify(Object.assign({ savedAt: Date.now() }, p)) : null);
+  }
+  function loadPending() {
+    const p = readJson(PENDING_KEY);
+    if (!p || typeof p.rid !== "string" || typeof p.secret !== "string") return null;
+    if (Date.now() - (p.savedAt || 0) > 30 * 60 * 1000) {
+      savePending(null);
+      return null;
+    }
+    return p;
+  }
+
+  return {
+    configure(fn) {
+      serverUrlFn = fn;
+    },
+    token,
+    /** ログインしているか(自動ログインのトークンがあるか) */
+    isLoggedIn: () => !!token(),
+    isGuest: () => !token(),
+    /** 表示する名前(まだ分からなければ null) */
+    displayName: () => {
+      const id = identity();
+      return id ? id.name : null;
+    },
+    applyHello,
+    helloMessage,
+    setGuestName,
+    /** ゲストが自分で決めた名前(「(ゲスト)」の前の部分。決めていなければ null) */
+    guestName: () => read(GUEST_NAME_KEY),
+    setSession,
+    clearSession,
+    request,
+    refresh,
+    savePending,
+    loadPending,
+    onChange(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+  };
+})();
+window.MahjongAccount = MahjongAccount;
+
 /**
  * 中継サーバーとの WebSocket 接続を管理する。接続が切れた場合は自動で再接続し、
  * 発行済みのトークンで同じ座席に戻る(サーバー側は切断から5分間、座席を予約している)。
@@ -11373,7 +11730,10 @@ class WsRoomController {
     ws.addEventListener("open", () => {
       if (gen !== this._socketGen) return;
       this._lastMessageAt = Date.now();
-      ws.send(JSON.stringify(firstMessage));
+      // 最初に名乗り(ログイン中のアカウント/ゲスト)、その返事が届いてから本来の要求を送る
+      // (ルームでの名前はサーバーが名乗りから決めるため)
+      this._afterHello = firstMessage;
+      ws.send(JSON.stringify(MahjongAccount.helloMessage("hello")));
       this._startPing();
     });
     ws.addEventListener("message", (ev) => {
@@ -11524,6 +11884,20 @@ class WsRoomController {
     if (!msg || typeof msg.type !== "string") return;
 
     if (msg.type === "pong") return;
+
+    // 名乗りの返事が届いたら、待たせていた本来の要求を送る
+    if (this._afterHello && (msg.type === "hello-ok" || (msg.type === "account-error" && msg.op === "hello"))) {
+      if (msg.type === "hello-ok") MahjongAccount.applyHello(msg);
+      const first = this._afterHello;
+      this._afterHello = null;
+      if (first && this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(first));
+      return;
+    }
+    // 名乗りに対応していない古いサーバー
+    if (this._afterHello && msg.type === "error") {
+      this._afterHello = null;
+      msg = { type: "error", message: "サーバーが古いバージョンのため対戦できません(サーバーの更新が必要です)。" };
+    }
 
     if (msg.type === "match-waiting") {
       if (this.onMatchWaiting) this.onMatchWaiting();
@@ -12470,15 +12844,18 @@ const MahjongLobby = (function () {
       };
       // 自動マッチング: 同じサーバーで相手を探している人と自動で組む
       menuBtn("自動マッチング", showMatchRuleSelect, true);
+      // ゲスト(ログインなし)はルーム作成・牌譜を使えない(docs/account-spec.md)
+      const loggedIn = MahjongAccount.isLoggedIn();
       // ルーム作成時は、先に持ち時間を決める画面を挟む
-      menuBtn("ルームを作成", () => showRoomOptions(loadLastServerUrl(), loadLastPlayerName()));
+      if (loggedIn) menuBtn("ルームを作成", () => showRoomOptions(loadLastServerUrl(), loadLastPlayerName()));
       // ルームに参加: ルームコードは次の画面で入力する
       menuBtn("ルームに参加", showJoinRoom);
       // 観戦: 対局中の一覧から選ぶか、ルームコードを入力して観戦する
       menuBtn("観戦", showSpectateList);
       // CPU対戦は画面上側(相手側)をCPUが操作する。開始前にCPU・持ち時間・起家を選ぶ
       menuBtn("CPU対戦", showTestPlayOptions);
-      menuBtn("牌譜", showKifuList);
+      if (loggedIn) menuBtn("牌譜", showKifuList);
+      menuBtn(loggedIn ? "アカウント" : "ユーザー登録・ログイン", showAccount);
       menuBtn("オプション", showSettings);
       menuBtn("ルール確認", showRules);
 
@@ -12486,10 +12863,19 @@ const MahjongLobby = (function () {
 
       // 現在のプレイヤー名(変更は「オプション」から)とオンライン人数
       const info = el("div", { className: "lobby-current" });
-      const name = loadLastPlayerName();
-      info.appendChild(
-        el("p", { className: "lobby-current-name", textContent: `プレイヤー名: ${name || "Player"}` })
-      );
+      const nameP = el("p", { className: "lobby-current-name", textContent: `プレイヤー名: ${accountLabel()}` });
+      info.appendChild(nameP);
+      // サーバーに名乗った結果(ゲスト番号・ログイン中の名前)が届いたら表示を更新する。ログインが切れていたら画面ごと描き直す
+      const unsubscribeName = MahjongAccount.onChange(() => {
+        if (!nameP.isConnected) {
+          unsubscribeName();
+          return;
+        }
+        if (MahjongAccount.isLoggedIn() !== loggedIn) showLobby();
+        else nameP.textContent = `プレイヤー名: ${accountLabel()}`;
+      });
+      // ログアウト直後などで名前(ゲスト番号)がまだ分からなければ、サーバーに名乗って確かめる
+      if (!MahjongAccount.displayName()) MahjongAccount.refresh().catch(() => {});
       info.appendChild(buildLobbyOnlineCountRow());
       wrap.appendChild(info);
       root.appendChild(wrap);
@@ -12815,6 +13201,430 @@ const MahjongLobby = (function () {
     }
 
     /** 「オプション」: プレイヤー名・牌譜・音の設定 */
+    // ---------------- アカウント(docs/account-spec.md) ----------------
+
+    /** ロビー・オプションに出す名前(ゲストの名前はサーバーが「(ゲスト)」を付けたもの。まだ分からなければ「確認中」) */
+    function accountLabel() {
+      const n = MahjongAccount.displayName();
+      if (MahjongAccount.isLoggedIn()) return n || "(確認中)";
+      return n || "ゲスト";
+    }
+
+    /** アカウントの画面の共通の枠。戻り値の error(text) で枠内にエラーを出す */
+    function accountScreen(title) {
+      root.innerHTML = "";
+      const wrap = el("div", { className: "lobby room-options account-screen" });
+      wrap.appendChild(el("h2", { className: "room-options-title", textContent: title }));
+      const errorP = el("p", { className: "lobby-error" });
+      root.appendChild(wrap);
+      return {
+        wrap,
+        text(t, className) {
+          const p = el("p", { className: className || "account-text", textContent: t });
+          wrap.appendChild(p);
+          return p;
+        },
+        field(label, props) {
+          const f = el("label", { className: "settings-field" });
+          f.appendChild(el("span", { className: "settings-label", textContent: label }));
+          const input = el("input", Object.assign({ type: "text", className: "lobby-code-input account-input" }, props));
+          f.appendChild(input);
+          wrap.appendChild(f);
+          return input;
+        },
+        buttons(list) {
+          const row = el("div", { className: "lobby-join-row account-buttons" });
+          const made = list.map(([text, onClick, primary]) => {
+            const b = el("button", { type: "button", className: "btn" + (primary ? " btn-primary" : ""), textContent: text });
+            b.addEventListener("click", onClick);
+            row.appendChild(b);
+            return b;
+          });
+          wrap.appendChild(row);
+          wrap.appendChild(errorP);
+          return made;
+        },
+        error(t) {
+          errorP.textContent = t || "";
+          if (!errorP.isConnected) wrap.appendChild(errorP);
+        },
+      };
+    }
+
+    /** ボタンを押している間(サーバーの返事待ち)は押せなくする */
+    async function busy(buttons, fn) {
+      buttons.forEach((b) => (b.disabled = true));
+      try {
+        return await fn();
+      } finally {
+        buttons.forEach((b) => (b.disabled = false));
+      }
+    }
+
+    function showMessage(title, text, next) {
+      const sc = accountScreen(title);
+      sc.text(text);
+      sc.buttons([["OK", next || showLobby, true]]);
+    }
+
+    /** アカウントの画面(ゲストは登録・ログイン、ログイン中は名前変更など) */
+    function showAccount() {
+      if (!MahjongAccount.isLoggedIn()) {
+        const sc = accountScreen("ユーザー登録・ログイン");
+        sc.text(`いまの名前: ${accountLabel()}`);
+        sc.text("ユーザー登録すると、名前を確保でき(「(ゲスト)」が付かなくなります)、ルーム作成・牌譜などの機能が使えます。登録にはメールアドレスが必要です(パスワードは不要)。");
+        sc.buttons([
+          ["新規登録", showRegister, true],
+          ["名前を変更", showGuestRename],
+          ["ログイン", showLogin],
+          ["メールアドレスの変更", showEmailChange],
+          ["プライバシーポリシー", () => showPrivacyPolicy(showAccount)],
+          ["戻る", showLobby],
+        ]);
+        return;
+      }
+      const sc = accountScreen("アカウント");
+      sc.text(`ユーザー名: ${accountLabel()}`);
+      const mailP = sc.text("メールアドレス: 読み込み中…");
+      const [renameBtn] = sc.buttons([
+        ["名前を変更", showRename],
+        ["引継ぎコードを発行", showTransferCode],
+        ["ログアウト", confirmLogout],
+        ["アカウントを削除", confirmDelete],
+        ["プライバシーポリシー", () => showPrivacyPolicy(showAccount)],
+        ["戻る", showLobby],
+      ]);
+      MahjongAccount.request({ type: "account-info" })
+        .then((info) => {
+          if (!mailP.isConnected) return;
+          mailP.textContent = `メールアドレス: ${info.email}`;
+          if (info.nameChangeAvailableAt && info.nameChangeAvailableAt > Date.now()) {
+            const d = new Date(info.nameChangeAvailableAt);
+            renameBtn.disabled = true;
+            sc.text(`名前は ${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}時以降に変更できます。`, "account-note");
+          }
+        })
+        .catch((err) => {
+          if (!mailP.isConnected) return;
+          mailP.textContent = "メールアドレス: -";
+          if (err.reason === "account") {
+            // 別の端末で削除・メールアドレス変更された等で、自動ログインが無効になっていた
+            MahjongAccount.clearSession();
+            showMessage("ログインが切れました", "もう一度ログインしてください。", showAccount);
+            return;
+          }
+          sc.error(err.message);
+        });
+    }
+
+    /** メールを送って、認証コードの入力画面へ進む */
+    async function startAuth(sc, buttons, params) {
+      sc.error("");
+      try {
+        const r = await busy(buttons, () => MahjongAccount.request(Object.assign({ type: "auth-start" }, params)));
+        const pending = { rid: r.rid, secret: r.secret, mode: params.mode, email: r.email, resendAt: Date.now() + (r.resendAfterMs || 60000) };
+        MahjongAccount.savePending(pending);
+        showCodeEntry(pending);
+      } catch (err) {
+        sc.error(err.message);
+      }
+    }
+
+    function showRegister() {
+      const sc = accountScreen("新規登録");
+      const nameInput = sc.field("ユーザー名(20文字まで。空白・見えない文字は使えません)", { maxLength: 40, autocomplete: "username" });
+      const emailInput = sc.field("メールアドレス", { type: "email", maxLength: 254, autocomplete: "email", inputMode: "email" });
+      const agree = el("label", { className: "room-options-choice account-agree" });
+      const agreeCb = el("input", { type: "checkbox" });
+      agree.appendChild(agreeCb);
+      agree.appendChild(el("span", { textContent: " プライバシーポリシーに同意する" }));
+      sc.wrap.appendChild(agree);
+      const buttons = sc.buttons([
+        [
+          "確認メールを送る",
+          () => {
+            if (!agreeCb.checked) {
+              sc.error("プライバシーポリシーに同意してください。");
+              return;
+            }
+            startAuth(sc, buttons, { mode: "register", name: nameInput.value, email: emailInput.value });
+          },
+          true,
+        ],
+        ["プライバシーポリシー", () => showPrivacyPolicy(showRegister)],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    function showLogin() {
+      const sc = accountScreen("ログイン");
+      sc.text("登録したユーザー名を入力してください。登録したメールアドレスにログイン用のメールが届きます。");
+      const nameInput = sc.field("ユーザー名", { maxLength: 40, autocomplete: "username" });
+      const buttons = sc.buttons([
+        ["確認メールを送る", () => startAuth(sc, buttons, { mode: "login", name: nameInput.value }), true],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    function showEmailChange() {
+      const sc = accountScreen("メールアドレスの変更");
+      sc.text("ログイン中の端末の「アカウント」→「引継ぎコードを発行」で出した引継ぎコードと、新しいメールアドレスを入力してください。新しいメールアドレスに確認メールが届きます。");
+      const nameInput = sc.field("ユーザー名", { maxLength: 40, autocomplete: "username" });
+      const codeInput = sc.field("引継ぎコード", { maxLength: 24, autocomplete: "off", autocapitalize: "characters" });
+      const emailInput = sc.field("新しいメールアドレス", { type: "email", maxLength: 254, autocomplete: "email", inputMode: "email" });
+      const buttons = sc.buttons([
+        [
+          "確認メールを送る",
+          () => startAuth(sc, buttons, { mode: "email", name: nameInput.value, transferCode: codeInput.value, email: emailInput.value }),
+          true,
+        ],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    const AUTH_MODE_TITLES = { register: "新規登録", login: "ログイン", email: "メールアドレスの変更", delete: "アカウントの削除" };
+
+    /** 認証コードの入力画面(メールのリンクを押すと表示されるコードを入力する) */
+    function showCodeEntry(pending) {
+      const sc = accountScreen(AUTH_MODE_TITLES[pending.mode] || "認証コードの入力");
+      sc.text(
+        `${pending.email} にメールを送りました。メールのリンクを押し、開いたページの「続行」を押すと認証コード(6桁)が表示されます。そのコードを入力してください。`
+      );
+      sc.text("メールが届かない場合は、迷惑メールのフォルダも確認してください。", "account-note");
+      const codeInput = sc.field("認証コード", { maxLength: 7, inputMode: "numeric", autocomplete: "one-time-code", className: "lobby-code-input account-input account-code-input" });
+      let resendTimer = null;
+      const buttons = sc.buttons([
+        [
+          "確定",
+          async () => {
+            sc.error("");
+            try {
+              const r = await busy(buttons, () =>
+                MahjongAccount.request({ type: "auth-complete", rid: pending.rid, secret: pending.secret, code: codeInput.value })
+              );
+              clearInterval(resendTimer);
+              MahjongAccount.savePending(null);
+              if (r.deleted) {
+                MahjongAccount.clearSession();
+                showMessage("アカウントを削除しました", "ご利用ありがとうございました。これからはゲストとして遊べます。");
+                return;
+              }
+              MahjongAccount.setSession(r.token, r.name);
+              const doneText = { register: "登録しました", login: "ログインしました", email: "メールアドレスを変更しました" }[pending.mode] || "完了しました";
+              showMessage(doneText, `ユーザー名: ${r.name}`);
+            } catch (err) {
+              sc.error(err.message);
+              if (["expired", "attempts", "secret"].includes(err.reason)) MahjongAccount.savePending(null);
+            }
+          },
+          true,
+        ],
+        [
+          "メールを送り直す",
+          async () => {
+            sc.error("");
+            try {
+              const r = await busy(buttons, () => MahjongAccount.request({ type: "auth-resend", rid: pending.rid, secret: pending.secret }));
+              pending.resendAt = Date.now() + (r.resendAfterMs || 60000);
+              MahjongAccount.savePending(pending);
+              sc.error("メールを送り直しました。");
+              updateResend();
+            } catch (err) {
+              sc.error(err.message);
+            }
+          },
+        ],
+        [
+          "やめる",
+          () => {
+            clearInterval(resendTimer);
+            MahjongAccount.savePending(null);
+            showAccount();
+          },
+        ],
+      ]);
+      const resendBtn = buttons[1];
+      // 送り直しは1分おき(残り秒数をボタンに出す)
+      const updateResend = () => {
+        if (!resendBtn.isConnected) {
+          clearInterval(resendTimer);
+          return;
+        }
+        const rest = Math.ceil(((pending.resendAt || 0) - Date.now()) / 1000);
+        resendBtn.disabled = rest > 0;
+        resendBtn.textContent = rest > 0 ? `メールを送り直す(${rest}秒)` : "メールを送り直す";
+      };
+      updateResend();
+      resendTimer = setInterval(updateResend, 1000);
+    }
+
+    /** メールのリンクから開いた確認ページ: 認証コードを表示する */
+    function showVerifyPage(params) {
+      // Firebase の標準のページの「続行」で戻ってきた場合は ?rid=…&v=…、アクション URL を公開ページにしている場合は
+      // ?mode=verifyEmail&oobCode=…&continueUrl=(…?rid=…&v=…)
+      let rid = params.get("rid");
+      let v = params.get("v");
+      const cont = params.get("continueUrl");
+      if (cont) {
+        try {
+          const inner = new URL(cont).searchParams;
+          rid = rid || inner.get("rid");
+          v = v || inner.get("v");
+        } catch (e) {
+          /* ignore */
+        }
+      }
+      const oobCode = params.get("oobCode");
+      const sc = accountScreen("認証コード");
+      const status = sc.text("確認しています…(サーバーの起動に1分ほどかかることがあります)");
+      const toTop = () => location.replace(location.pathname);
+      if (!rid || (!oobCode && !v)) {
+        status.textContent = "リンクが正しくありません。";
+        sc.buttons([["ゲームを開く", toTop, true]]);
+        return;
+      }
+      MahjongAccount.request({ type: "auth-verify", rid, oobCode: oobCode || undefined, v: v || undefined })
+        .then((r) => {
+          // 読み込み直しでリンクを使い直さないよう、アドレスからリンクの情報を消す
+          try {
+            history.replaceState(null, "", location.pathname);
+          } catch (e) {
+            /* ignore */
+          }
+          status.textContent = "ゲームを開いている画面に戻って、次の認証コードを入力してください(10分間有効)。";
+          sc.wrap.appendChild(el("div", { className: "account-code-display", textContent: r.code }));
+          const d = new Date(r.requestedAt);
+          sc.text(
+            `受付: ${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}(${AUTH_MODE_TITLES[r.mode] || ""})`,
+            "account-note"
+          );
+          sc.text("このコードは誰にも教えないでください。心当たりがない場合は、このページを閉じてください。", "account-warning");
+          sc.buttons([["ゲームを開く", toTop]]);
+        })
+        .catch((err) => {
+          status.textContent = err.message;
+          sc.buttons([["ゲームを開く", toTop, true]]);
+        });
+    }
+
+    /** ゲストの名前の変更(後ろに「(ゲスト)」が付く。名前は確保されない) */
+    function showGuestRename() {
+      const sc = accountScreen("名前を変更");
+      sc.text(`いまの名前: ${accountLabel()}`);
+      sc.text("ゲストの名前の後ろには「(ゲスト)」が付きます。名前を確保したい場合はユーザー登録してください。", "account-note");
+      const nameInput = sc.field("新しい名前(20文字まで。空白・見えない文字は使えません)", { maxLength: 40, autocomplete: "off" });
+      const buttons = sc.buttons([
+        [
+          "変更する",
+          async () => {
+            sc.error("");
+            try {
+              const r = await busy(buttons, () => MahjongAccount.request({ type: "guest-rename", name: nameInput.value }));
+              MahjongAccount.setGuestName(r.baseName, r.name);
+              showMessage("名前を変更しました", `新しい名前: ${r.name}`, showAccount);
+            } catch (err) {
+              sc.error(err.message);
+            }
+          },
+          true,
+        ],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    function showRename() {
+      const sc = accountScreen("名前を変更");
+      sc.text(`いまの名前: ${accountLabel()}`);
+      sc.text("名前を変えると、その後30日間は変更できません。前の名前は5分後から他の人が使えるようになります。", "account-note");
+      const nameInput = sc.field("新しいユーザー名", { maxLength: 40, autocomplete: "off" });
+      const buttons = sc.buttons([
+        [
+          "変更する",
+          async () => {
+            sc.error("");
+            try {
+              const r = await busy(buttons, () => MahjongAccount.request({ type: "account-rename", name: nameInput.value }));
+              MahjongAccount.setSession(MahjongAccount.token(), r.name);
+              showMessage("名前を変更しました", `新しい名前: ${r.name}`, showAccount);
+            } catch (err) {
+              sc.error(err.message);
+            }
+          },
+          true,
+        ],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    function showTransferCode() {
+      const sc = accountScreen("引継ぎコード");
+      sc.text("メールアドレスを変更するときに使うコードです。発行すると、前に発行したコードは使えなくなります(有効期限24時間・1回限り)。");
+      const buttons = sc.buttons([
+        [
+          "発行する",
+          async () => {
+            sc.error("");
+            try {
+              const r = await busy(buttons, () => MahjongAccount.request({ type: "transfer-issue" }));
+              const done = accountScreen("引継ぎコード");
+              done.wrap.appendChild(el("div", { className: "account-code-display account-transfer-code", textContent: r.code }));
+              const d = new Date(r.expiresAt);
+              done.text(`有効期限: ${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
+              done.text("「ユーザー登録・ログイン」→「メールアドレスの変更」で、このコードと新しいメールアドレスを入力してください。このコードは誰にも教えないでください。", "account-warning");
+              done.buttons([["戻る", showAccount, true]]);
+            } catch (err) {
+              sc.error(err.message);
+            }
+          },
+          true,
+        ],
+        ["戻る", showAccount],
+      ]);
+    }
+
+    function confirmLogout() {
+      const sc = accountScreen("ログアウト");
+      sc.text("ログアウトしますか?もう一度ログインするには、ユーザー名を入力してメールの認証コードを入力します。");
+      const buttons = sc.buttons([
+        [
+          "ログアウトする",
+          async () => {
+            try {
+              await busy(buttons, () => MahjongAccount.request({ type: "logout", sessionToken: MahjongAccount.token() }));
+            } catch (e) {
+              /* サーバーに届かなくても、この端末ではログアウトする */
+            }
+            MahjongAccount.clearSession();
+            showMessage("ログアウトしました", "これからはゲストとして遊べます。");
+          },
+          true,
+        ],
+        ["やめる", showAccount],
+      ]);
+    }
+
+    function confirmDelete() {
+      const sc = accountScreen("アカウントの削除");
+      sc.text("アカウントを削除すると、名前・登録情報が消え、元に戻せません。本人確認のため、登録したメールアドレスに確認メールを送ります。");
+      const buttons = sc.buttons([
+        ["確認メールを送る", () => startAuth(sc, buttons, { mode: "delete" }), true],
+        ["やめる", showAccount],
+      ]);
+    }
+
+    function showPrivacyPolicy(back) {
+      root.innerHTML = "";
+      const wrap = el("div", { className: "lobby room-options rules-view" });
+      wrap.appendChild(el("h2", { className: "room-options-title", textContent: "プライバシーポリシー" }));
+      const scroll = el("div", { className: "rules-scroll" });
+      scroll.appendChild(el("pre", { className: "rules-text", textContent: PRIVACY_POLICY_TEXT }));
+      wrap.appendChild(scroll);
+      const backBtn = el("button", { type: "button", className: "btn rules-back-btn", textContent: "戻る" });
+      backBtn.addEventListener("click", back || showLobby);
+      wrap.appendChild(backBtn);
+      root.appendChild(wrap);
+    }
+
     function showSettings() {
       root.innerHTML = "";
       // options-screen: スマホ横向きでは CPU対戦・ルームの設定画面と同じく、欄を横に並べる配置になる
@@ -12826,16 +13636,33 @@ const MahjongLobby = (function () {
       fieldsBox.appendChild(basicCol);
       wrap.appendChild(fieldsBox);
 
-      const nameField = el("label", { className: "settings-field" });
+      // プレイヤー名: ログイン中はアカウントの名前(変更は「アカウント設定」から)。ゲストはここで直接変えられる
+      // (後ろに「(ゲスト)」が付く。空欄にすると既定の「Playern(ゲスト)」に戻る)
+      const loggedIn = MahjongAccount.isLoggedIn();
+      const nameField = el("div", { className: "settings-field" });
       nameField.appendChild(el("span", { className: "settings-label", textContent: "プレイヤー名" }));
-      const nameInput = el("input", {
-        type: "text",
-        placeholder: "未入力なら自動でPlayer1/Player2になります",
-        maxLength: 20,
-        className: "lobby-code-input lobby-name-input",
-        value: loadLastPlayerName(),
+      let guestNameInput = null;
+      if (loggedIn) {
+        nameField.appendChild(el("span", { className: "settings-account-name", textContent: accountLabel() }));
+      } else {
+        const current = MahjongAccount.displayName() || "";
+        guestNameInput = el("input", {
+          type: "text",
+          maxLength: 40,
+          className: "lobby-code-input lobby-name-input",
+          value: MahjongAccount.guestName() || "",
+          placeholder: MahjongAccount.guestName() ? "" : current.replace(/\(ゲスト\)$/, "") || "Player",
+        });
+        nameField.appendChild(guestNameInput);
+        nameField.appendChild(el("span", { className: "settings-hint", textContent: "後ろに「(ゲスト)」が付きます。空欄にすると既定の名前に戻ります。" }));
+      }
+      const accountBtn = el("button", {
+        type: "button",
+        className: "btn settings-reset-btn",
+        textContent: MahjongAccount.isLoggedIn() ? "アカウント設定" : "ユーザー登録・ログイン",
       });
-      nameField.appendChild(nameInput);
+      accountBtn.addEventListener("click", showAccount);
+      nameField.appendChild(accountBtn);
       basicCol.appendChild(nameField);
 
       // 牌譜を残すかどうか(オンライン対戦・CPU対戦ごと。観戦は残さない)
@@ -12853,7 +13680,8 @@ const MahjongLobby = (function () {
       };
       const kifuOnlineCb = kifuCheckbox("オンライン対戦", kifuSettings.online);
       const kifuCpuCb = kifuCheckbox("CPU対戦", kifuSettings.cpu);
-      basicCol.appendChild(kifuGroup);
+      // 牌譜はログイン中だけ使える
+      if (MahjongAccount.isLoggedIn()) basicCol.appendChild(kifuGroup);
 
       // 効果音・発声(対局画面のスピーカーのボタンでも、すべての音をまとめて消せる)
       const sound = MahjongSound.getSettings();
@@ -12917,9 +13745,30 @@ const MahjongLobby = (function () {
       const row = el("div", { className: "lobby-join-row" });
       const saveBtn = el("button", { type: "button", className: "btn btn-primary", textContent: "保存する" });
       const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
-      saveBtn.addEventListener("click", () => {
-        saveLastPlayerName(nameInput.value.trim());
-        if (typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
+      saveBtn.addEventListener("click", async () => {
+        // ゲストの名前(変わっていればサーバーで検査してから保存する。使えない名前なら画面に残って理由を出す)
+        if (guestNameInput) {
+          const next = guestNameInput.value.trim();
+          const prev = MahjongAccount.guestName() || "";
+          if (next !== prev) {
+            if (!next) {
+              MahjongAccount.setGuestName(null, null);
+              MahjongAccount.refresh().catch(() => {});
+            } else {
+              try {
+                saveBtn.disabled = true;
+                const r = await MahjongAccount.request({ type: "guest-rename", name: next });
+                MahjongAccount.setGuestName(r.baseName, r.name);
+              } catch (err) {
+                msg.textContent = err.message;
+                return;
+              } finally {
+                saveBtn.disabled = false;
+              }
+            }
+          }
+        }
+        if (MahjongAccount.isLoggedIn() && typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
         MahjongSound.update({
           se: seCb.checked,
           voice: voiceCb.checked,
@@ -13379,7 +14228,22 @@ const MahjongLobby = (function () {
       }
     }
 
-    showLobby();
+    MahjongAccount.configure(loadLastServerUrl);
+    const params = new URLSearchParams(location.search);
+    if ((params.get("mode") === "verifyEmail" && params.get("oobCode")) || (params.get("rid") && params.get("v"))) {
+      // メールのリンクから開いた確認ページ
+      showVerifyPage(params);
+      return;
+    }
+    const pending = MahjongAccount.loadPending();
+    if (pending) {
+      // 認証コードの入力の途中でページが読み込み直された(メールを見に行った間など)
+      showCodeEntry(pending);
+    } else {
+      showLobby();
+    }
+    // サーバーに名乗って、ゲスト番号・ログイン中の名前を確かめる(サーバーの起動待ちでも画面はすぐ使える)
+    MahjongAccount.refresh().catch(() => {});
   }
 
   return { mount };
