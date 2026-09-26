@@ -107,6 +107,23 @@ curl http://localhost:8080/health
 # => ok
 ```
 
+動いている版(デプロイしたコミット)と起動時刻は `/version` で確認できます(自動デプロイで入れ替わったかの確認用):
+
+```bash
+curl https://ryanma.onrender.com/version
+# => {"commit":"(Render が設定する RENDER_GIT_COMMIT)","protocol":2,"startedAt":"2026-09-26T..."}
+```
+
+### 自動デプロイされないとき
+
+main を更新しても数分たって `/version` の commit が変わらない場合は、次を確認します。
+
+1. Render の Events タブで、デプロイが始まって失敗していないか(失敗ならログに原因が出る)。
+2. Settings → Build & Deploy: Repository が GitHub 連携で `RyanD-Me/ryanma`、Branch が `main`、Auto-Deploy が「On Commit」、
+   Build Filters が空欄か。
+3. 設定が正しいのに始まらない場合は、GitHub の更新が Render に届いていない。Repository の接続をつなぎ直す
+   (2026-09-26 にこれで直した)。急ぐときは「Manual Deploy → Deploy latest commit」で手動デプロイする。
+
 ## 制約・注意点
 
 - アカウントの認証はありません。ルームコードを知っている人なら誰でも参加できます
