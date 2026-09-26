@@ -672,3 +672,43 @@ test("自動マッチングの相手待ち中は create/join/rejoin/spectate を
   handleClientMessage(registry, c, { type: "create" });
   assert.equal(c.received.at(-1).type, "created");
 });
+
+test("不正な操作を連打されても、対局データ一式を送り直すのは2秒に1回まで", () => {
+  const registry = timerRegistry();
+  const { conns, session } = playingRoom(registry);
+  const other = session.state.currentTurn === "east" ? "south" : "east";
+  const before = conns[other].received.length;
+  const bad = { type: "action", action: { type: "discard", tileId: "x" } };
+  for (let i = 0; i < 50; i++) handleClientMessage(registry, conns[other], bad);
+  const got = conns[other].received.slice(before);
+  assert.equal(got.filter((m) => m.type === "action-rejected").length, 50);
+  assert.equal(got.filter((m) => m.type === "game").length, 1);
+  registry.clock.now += 2000;
+  handleClientMessage(registry, conns[other], bad);
+  assert.equal(conns[other].received.at(-1).type, "game");
+});
+
+test("ルームコードは暗号用の乱数で作る(Math.random を使わない)", () => {
+  const { randomRoomCode, ROOM_CODE_LENGTH } = require("./roomRegistry");
+  const orig = Math.random;
+  Math.random = () => {
+    throw new Error("Math.random が使われた");
+  };
+  try {
+    const codes = new Set();
+    for (let i = 0; i < 200; i++) {
+      const c = randomRoomCode();
+      assert.match(c, new RegExp(`^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{${ROOM_CODE_LENGTH}}$`));
+      codes.add(c);
+    }
+    assert.ok(codes.size > 190);
+    // 自動マッチングの東家・南家(RoomRegistry の既定の乱数)も Math.random を使わない
+    const registry = new RoomRegistry();
+    const [a, b] = ["a", "b"].map(fakeConn);
+    handleClientMessage(registry, a, { type: "match" });
+    handleClientMessage(registry, b, { type: "match" });
+    assert.ok(a.received.some((m) => m.type === "matched"));
+  } finally {
+    Math.random = orig;
+  }
+});

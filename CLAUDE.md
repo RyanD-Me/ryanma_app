@@ -148,6 +148,11 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
   対局データにも `gameLength` が入る(ルームの待機画面の表示用)。
 - 起家: ルーム作成時に 自分/相手/ランダム を選ぶ(`dealerChoice`、localStorage `mahjong_room_dealer`)。create で持ち時間と
   一緒にサーバーへ送り、サーバーが起家を決める(ランダムは再戦ごとに選び直す)。自動マッチングは席をランダムに決め、east が起家。
+- 乱数: 牌山・ルームコード・起家(ランダム)・自動マッチングの東家/南家はすべて暗号用の乱数(`secureRandom` / `crypto.randomInt`)。
+  ルームコードを Math.random で作ると、観戦一覧に並ぶコードから次のコードを予測されうるため(2026-09-26 に変更)。
+- 接続数の上限(`server.js`): サーバー全体 `MAX_CONNECTIONS`(既定1000)・同じ接続元 `MAX_CONNECTIONS_PER_IP`(既定20)。
+  接続元は `cf-connecting-ip` → `true-client-ip` → `x-forwarded-for` の先頭 → 直接の接続元。人数の通知は接続の出入りも0.3秒まとめて送る。
+- 合法でない操作への応答は `action-rejected` だけで、対局データ一式の送り直しは接続ごとに2秒に1回まで(`RESYNC_INTERVAL_MS`)。
 - 自動マッチングの相手待ち中の接続からの create / join / rejoin / spectate はサーバーが断る(`protocol.js`。受け付けると、
   マッチング成立時に先に入ったルームが片付けられずに残り続けていた。2026-09-26 のセキュリティ確認で修正)。
 - 再接続: 座席トークンで5分以内なら同じ座席に戻れる。自動マッチングの自己マッチ防止に端末ID(localStorage `mahjong_ws_client_id`)。

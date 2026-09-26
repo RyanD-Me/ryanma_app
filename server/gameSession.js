@@ -85,7 +85,8 @@ class GameSession {
     this.dealerChoice = ["self", "opponent", "random"].includes(options.dealerChoice) ? options.dealerChoice : "self";
     /** 対局の長さ: "full" = 一荘戦(東〜北 計8局)、"half" = 半荘戦(東・南 計4局) */
     this.gameLength = options.gameLength === "half" ? "half" : "full";
-    this.random = options.random || Math.random;
+    // 起家を「ランダム」にしたときの決定にも、予測できない暗号用の乱数を使う
+    this.random = options.random || secureRandom;
     this.setTimer = options.setTimer || ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer || ((t) => clearTimeout(t));
     this.now = options.now || (() => Date.now());
@@ -646,6 +647,7 @@ function safeKindKey(kind) {
 
 module.exports = {
   GameSession,
+  secureRandom,
   normalizeTimeControl,
   DEAL_ANIMATION_MS,
   RESULT_AUTO_ADVANCE_MS,

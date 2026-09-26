@@ -31,7 +31,7 @@
  */
 
 const crypto = require("crypto");
-const { GameSession } = require("./gameSession");
+const { GameSession, secureRandom } = require("./gameSession");
 
 // 紛らわしい文字 (0/O, 1/I/L) を除いた英数字。声に出して伝えても書き取りやすいように。
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -43,13 +43,20 @@ const SPECTATOR_DELAY_MS = 3 * 60 * 1000;
 
 const SEATS = ["east", "south"];
 
+/**
+ * ルームコードを作る。暗号用の乱数を使う(Math.random は、観戦一覧に並ぶコードから内部の状態を
+ * 割り出して次に作られるコードを予測できてしまい、友人を待っているルームに先回りして入れるため)。
+ */
 function randomRoomCode() {
   let out = "";
   for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
-    out += ROOM_CODE_ALPHABET[Math.floor(Math.random() * ROOM_CODE_ALPHABET.length)];
+    out += ROOM_CODE_ALPHABET[crypto.randomInt(ROOM_CODE_ALPHABET.length)];
   }
   return out;
 }
+
+/** 操作を拒否したときに、対局データ一式を送り直す最短の間隔(ミリ秒)。拒否のたびに送ると、不正な操作を連打されて通信量が増えるため */
+const RESYNC_INTERVAL_MS = 2000;
 
 function randomToken() {
   return crypto.randomBytes(16).toString("hex");
@@ -92,7 +99,8 @@ class RoomRegistry {
    *   random は自動マッチングの東家・南家の決定に使う(テストで固定できるよう差し替え可能)。
    */
   constructor(options = {}) {
-    this.random = options.random || Math.random;
+    // 自動マッチングの東家・南家の決定。予測できない暗号用の乱数を使う(テストでは固定できるよう差し替え可能)
+    this.random = options.random || secureRandom;
     this.graceMs = options.graceMs != null ? options.graceMs : DEFAULT_RECONNECT_GRACE_MS;
     this.spectatorDelayMs = options.spectatorDelayMs != null ? options.spectatorDelayMs : SPECTATOR_DELAY_MS;
     this.now = options.now || (() => Date.now());
@@ -137,6 +145,8 @@ class RoomRegistry {
     this.spectatorInfo = new Map();
     /** 対局は終わったが、観戦者に遅れて配る分がまだ残っているルーム(code -> room) */
     this.closingRooms = new Map();
+    /** conn -> 最後に拒否時の対局データを送り直した時刻 */
+    this._lastResyncAt = new WeakMap();
   }
 
   // ---------------- 自動マッチング ----------------
@@ -346,7 +356,14 @@ class RoomRegistry {
       room.session.apply(info.seat, action);
     } catch (err) {
       safeSend(conn, { type: "action-rejected", message: (err && err.message) || "その操作はできません。" });
-      safeSend(conn, { type: "game", payload: room.session.viewFor(info.seat) });
+      // 局面が変わるたびに最新の対局データは届いているので、送り直しは念のため(食い違いの立て直し用)。
+      // 不正な操作を連打されても通信量が増えないよう、送り直すのは RESYNC_INTERVAL_MS に1回まで
+      const now = this.now();
+      const last = this._lastResyncAt.get(conn);
+      if (last === undefined || now - last >= RESYNC_INTERVAL_MS) {
+        this._lastResyncAt.set(conn, now);
+        safeSend(conn, { type: "game", payload: room.session.viewFor(info.seat) });
+      }
       return false;
     }
     this._broadcastGame(info.code);
@@ -616,4 +633,4 @@ class RoomRegistry {
   }
 }
 
-module.exports = { RoomRegistry, normalizeGameLength, randomRoomCode, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS, SPECTATOR_DELAY_MS };
+module.exports = { RoomRegistry, normalizeGameLength, randomRoomCode, RESYNC_INTERVAL_MS, ROOM_CODE_LENGTH, DEFAULT_RECONNECT_GRACE_MS, SPECTATOR_DELAY_MS };
