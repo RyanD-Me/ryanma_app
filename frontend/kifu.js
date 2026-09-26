@@ -261,6 +261,8 @@ function saveKifuSettings(settings) {
 /** この種類の対局を牌譜に残すか(対局の開始時に確かめる)。観戦は残さない */
 function kifuRecordingEnabled(mode) {
   if (mode !== "cpu" && mode !== "online") return false;
+  // ゲスト(ログインなし)は牌譜を使えない
+  if (typeof MahjongAccount !== "undefined" && MahjongAccount.isGuest()) return false;
   return loadKifuSettings()[mode];
 }
 
