@@ -41,7 +41,7 @@ const RESULT_AUTO_ADVANCE_MS = 18000;
  */
 const TIME_ALLOWANCE_MS = 2000;
 /** 相手が鳴けない捨て牌でも、この確率でランダムな時間だけ待ってから進める */
-const PASS_DELAY_CHANCE = 0.2;
+const PASS_DELAY_CHANCE = 1 / 7;
 /** そのときの待ち時間(ミリ秒)の範囲 */
 const PASS_DELAY_MIN_MS = 700;
 const PASS_DELAY_MAX_MS = 1800;

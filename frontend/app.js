@@ -2562,7 +2562,8 @@ class MahjongApp {
 
   /** 喰い替え禁止: ポンした直後、そのポンに使った牌と同じ種類は打牌できない。 */
   isForbiddenKuikaeTile(player, tile) {
-    if (!player.forbiddenDiscardKind) return false;
+    // 伏せ牌(オンライン対戦の相手の手牌は中身が届かない)は判定しない
+    if (!player.forbiddenDiscardKind || !tile.kind) return false;
     return E.tileKindKey(tile.kind) === E.tileKindKey(player.forbiddenDiscardKind);
   }
 
@@ -3132,10 +3133,14 @@ class MahjongApp {
       // 選択肢は自分が操作できる家の分だけ調べる(オンライン対戦では相手の手牌は伏せ牌で届くため)
       if (this.canAct("callWindow", seat)) {
         const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
-        if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
-        if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
-        if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));
-        wrap.appendChild(this.button("スルー", () => this.doPass()));
+        // ロン・ポン・カンのどれもできない場合はボタンを出さない(オンライン対戦では、鳴けない捨て牌でも
+        // サーバーがわざと少し待つことがある。その間に「スルー」だけが出ないように)
+        if (canRon || canPon || canMinkan) {
+          if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
+          if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
+          if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));
+          wrap.appendChild(this.button("スルー", () => this.doPass()));
+        }
       }
       return wrap;
     }
@@ -3950,6 +3955,16 @@ class CpuMahjongApp extends MahjongApp {
 /** 拡大率1.0のときの卓の基準サイズ(河が3段とも埋まった状態で実測した値) */
 const BOARD_DESIGN_WIDTH = 760;
 const BOARD_DESIGN_HEIGHT = 720;
+/**
+ * PC の対局画面の基準サイズ。自分の手牌を大きくし、両者の手牌を中央に寄せる余白を作るため、
+ * 広い画面では卓を 1100px に広げている(styles.css の「PC: 自分の手牌を大きく・両者の手牌を中央寄せ」)。
+ * 高さは大きくした自分の手牌(31px → 38px)の分と、見出しの行を含めて画面に収まるよう実測した値。
+ */
+const BOARD_TABLE_DESIGN_WIDTH = 1100;
+const BOARD_TABLE_DESIGN_HEIGHT = 745;
+/** styles.css で卓を広げる条件と同じ(これより狭い・低い画面では卓を広げない) */
+const BOARD_WIDE_TABLE_MIN_WIDTH = 900;
+const BOARD_WIDE_TABLE_MIN_HEIGHT = 481;
 /** 拡大しすぎると却って見づらいので上限を設ける */
 const BOARD_MAX_SCALE = 2;
 /** この幅以下はスマートフォン向けに別途レイアウトを調整しているため拡大しない */
@@ -3964,9 +3979,17 @@ function applyBoardScale() {
     shell.style.zoom = "";
     return;
   }
-  const scale = Math.min(width / BOARD_DESIGN_WIDTH, height / BOARD_DESIGN_HEIGHT, BOARD_MAX_SCALE);
+  // PC の対局画面は、卓を広げたときの基準サイズで拡大率を決める
+  const wideTable =
+    !!shell.querySelector(".table:not(.table-landscape)") &&
+    width >= BOARD_WIDE_TABLE_MIN_WIDTH &&
+    height >= BOARD_WIDE_TABLE_MIN_HEIGHT;
+  const designW = wideTable ? BOARD_TABLE_DESIGN_WIDTH : BOARD_DESIGN_WIDTH;
+  const designH = wideTable ? BOARD_TABLE_DESIGN_HEIGHT : BOARD_DESIGN_HEIGHT;
+  const scale = Math.min(width / designW, height / designH, BOARD_MAX_SCALE);
   // 1倍未満(縦に短い横向きスマートフォンなど)では拡大も縮小もしない
-  shell.style.zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
+  const zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
+  if (shell.style.zoom !== zoom) shell.style.zoom = zoom;
 }
 
 window.addEventListener("resize", applyBoardScale);
@@ -3974,6 +3997,8 @@ window.addEventListener("resize", applyBoardScale);
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app");
   applyBoardScale();
+  // ロビー⇔対局画面の切り替えで卓の基準サイズが変わるため、画面を描き直すたびに拡大率を確かめる
+  if (window.MutationObserver) new MutationObserver(applyBoardScale).observe(root, { childList: true });
   // online.js が読み込まれていれば、そちらが「ローカル対戦 / オンライン対戦」の
   // 選択画面(ロビー)を出して起動を引き継ぐ。online.js が無い場合(単体テストなど)は
   // 従来通りローカル対戦をそのまま起動する。

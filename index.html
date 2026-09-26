@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-iW6n///fcnu232hVSb6dpnyi0HWxlHGFb3buH0NTHZ8=' 'sha256-fnL5k7/HY5v+G4ptlliyTDY9tSDImnhG/ISxgrPUbPQ=' 'sha256-Gbww0d535zl4qsAUjo4by7M8WQah39TGJVs+zcwTM8k=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-5nORkxEE8jCQV69tAmJLUyQh2M3UoJHU1EjlARZL04c=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-iW6n///fcnu232hVSb6dpnyi0HWxlHGFb3buH0NTHZ8=' 'sha256-kRYujZi5OtMJUT0VVmuAv0/dG1V1l6DEEDFjFKXbozg=' 'sha256-Gbww0d535zl4qsAUjo4by7M8WQah39TGJVs+zcwTM8k=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-5nORkxEE8jCQV69tAmJLUyQh2M3UoJHU1EjlARZL04c=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1784,6 +1784,41 @@ h1, .round-badge, .log-title {
   .table-landscape .replay-buttons { justify-content: space-between; gap: 3px; }
   .table-landscape .replay-btn { min-width: 0; flex: 1 1 0; padding: 4px 0; font-size: 0.75rem; }
   .table-landscape .replay-slider { flex: 0 0 auto; width: 100%; }
+}
+
+/* ---------------- PC: 自分の手牌を大きく・両者の手牌を中央寄せ ----------------
+   PC(スマホ縦向き・横向き以外)では、自分の手牌を 38px に大きくする。
+   手牌の行は「手牌13枚+ツモ牌1枚ぶん」の枠(--hand-box-w)の幅を固定して、行の中央に置く。
+   鳴いて手牌の枚数が減っても枠の左端(1枚目の位置)は動かず、面子は行の右側の余白に並ぶ。
+   ただし右側にポン2組ぶん(--meld-reserve)の余白が取れないほど行が狭い場合は、取れる位置まで
+   枠を左へ寄せる(枠の位置は行の幅だけで決まり、鳴きの有無では変わらない)。
+   面子の牌は、その右側の余白に収まるように縮める(2組までは手牌と同じ大きさ)。
+   卓を広げられない狭い画面(タブレットの縦向きなど)では、これまでどおりの並びにする。 */
+@media (min-width: 900px) and (min-height: 481px) {
+  .table:not(.table-landscape) .hand-row:not(.hand-row-opponent) .tiles { --base-tile-w: 38px; }
+  .table:not(.table-landscape) .tiles {
+    --hand-box-w: calc(14 * var(--base-tile-w) + 4px);
+    --meld-reserve: calc(2 * (2 + 1.481) * var(--base-tile-w) + 13px);
+    --hand-offset: clamp(
+      0px,
+      calc((100cqw - var(--hand-box-w)) / 2),
+      calc(100cqw - var(--hand-box-w) - var(--meld-reserve))
+    );
+    --meld-tile-w: min(
+      calc(var(--base-tile-w) * var(--meld-ratio)),
+      calc((100cqw - var(--hand-offset) - var(--hand-box-w) - var(--meld-fixed-px, 0px) - 1px) / var(--meld-units, 1))
+    );
+  }
+  .table:not(.table-landscape) .hand-and-draw {
+    flex: 0 0 auto;
+    width: var(--hand-box-w);
+    margin-left: var(--hand-offset);
+  }
+}
+/* 広い画面の PC では、手牌を中央に寄せる余白を作るため卓を広げる(スマホ横向きは除く)。
+   条件と幅は app.js の BOARD_WIDE_TABLE_MIN_WIDTH / BOARD_TABLE_DESIGN_WIDTH と合わせる(拡大率の計算に使う) */
+@media (min-width: 900px) and (min-height: 481px) {
+  .app-shell:has(.table:not(.table-landscape)) { max-width: 1100px; }
 }
 
 </style>
@@ -7855,7 +7890,8 @@ class MahjongApp {
 
   /** 喰い替え禁止: ポンした直後、そのポンに使った牌と同じ種類は打牌できない。 */
   isForbiddenKuikaeTile(player, tile) {
-    if (!player.forbiddenDiscardKind) return false;
+    // 伏せ牌(オンライン対戦の相手の手牌は中身が届かない)は判定しない
+    if (!player.forbiddenDiscardKind || !tile.kind) return false;
     return E.tileKindKey(tile.kind) === E.tileKindKey(player.forbiddenDiscardKind);
   }
 
@@ -8425,10 +8461,14 @@ class MahjongApp {
       // 選択肢は自分が操作できる家の分だけ調べる(オンライン対戦では相手の手牌は伏せ牌で届くため)
       if (this.canAct("callWindow", seat)) {
         const { canRon, canPon, canMinkan } = this.computeCallOptions(seat, discard.tile);
-        if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
-        if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
-        if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));
-        wrap.appendChild(this.button("スルー", () => this.doPass()));
+        // ロン・ポン・カンのどれもできない場合はボタンを出さない(オンライン対戦では、鳴けない捨て牌でも
+        // サーバーがわざと少し待つことがある。その間に「スルー」だけが出ないように)
+        if (canRon || canPon || canMinkan) {
+          if (canRon) wrap.appendChild(this.button("ロン", () => this.doRon(), "primary"));
+          if (canPon) wrap.appendChild(this.button("ポン", () => this.doPon(seat)));
+          if (canMinkan) wrap.appendChild(this.button("カン", () => this.doMinkan(seat)));
+          wrap.appendChild(this.button("スルー", () => this.doPass()));
+        }
       }
       return wrap;
     }
@@ -9243,6 +9283,16 @@ class CpuMahjongApp extends MahjongApp {
 /** 拡大率1.0のときの卓の基準サイズ(河が3段とも埋まった状態で実測した値) */
 const BOARD_DESIGN_WIDTH = 760;
 const BOARD_DESIGN_HEIGHT = 720;
+/**
+ * PC の対局画面の基準サイズ。自分の手牌を大きくし、両者の手牌を中央に寄せる余白を作るため、
+ * 広い画面では卓を 1100px に広げている(styles.css の「PC: 自分の手牌を大きく・両者の手牌を中央寄せ」)。
+ * 高さは大きくした自分の手牌(31px → 38px)の分と、見出しの行を含めて画面に収まるよう実測した値。
+ */
+const BOARD_TABLE_DESIGN_WIDTH = 1100;
+const BOARD_TABLE_DESIGN_HEIGHT = 745;
+/** styles.css で卓を広げる条件と同じ(これより狭い・低い画面では卓を広げない) */
+const BOARD_WIDE_TABLE_MIN_WIDTH = 900;
+const BOARD_WIDE_TABLE_MIN_HEIGHT = 481;
 /** 拡大しすぎると却って見づらいので上限を設ける */
 const BOARD_MAX_SCALE = 2;
 /** この幅以下はスマートフォン向けに別途レイアウトを調整しているため拡大しない */
@@ -9257,9 +9307,17 @@ function applyBoardScale() {
     shell.style.zoom = "";
     return;
   }
-  const scale = Math.min(width / BOARD_DESIGN_WIDTH, height / BOARD_DESIGN_HEIGHT, BOARD_MAX_SCALE);
+  // PC の対局画面は、卓を広げたときの基準サイズで拡大率を決める
+  const wideTable =
+    !!shell.querySelector(".table:not(.table-landscape)") &&
+    width >= BOARD_WIDE_TABLE_MIN_WIDTH &&
+    height >= BOARD_WIDE_TABLE_MIN_HEIGHT;
+  const designW = wideTable ? BOARD_TABLE_DESIGN_WIDTH : BOARD_DESIGN_WIDTH;
+  const designH = wideTable ? BOARD_TABLE_DESIGN_HEIGHT : BOARD_DESIGN_HEIGHT;
+  const scale = Math.min(width / designW, height / designH, BOARD_MAX_SCALE);
   // 1倍未満(縦に短い横向きスマートフォンなど)では拡大も縮小もしない
-  shell.style.zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
+  const zoom = scale > 1 ? String(Math.round(scale * 100) / 100) : "";
+  if (shell.style.zoom !== zoom) shell.style.zoom = zoom;
 }
 
 window.addEventListener("resize", applyBoardScale);
@@ -9267,6 +9325,8 @@ window.addEventListener("resize", applyBoardScale);
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app");
   applyBoardScale();
+  // ロビー⇔対局画面の切り替えで卓の基準サイズが変わるため、画面を描き直すたびに拡大率を確かめる
+  if (window.MutationObserver) new MutationObserver(applyBoardScale).observe(root, { childList: true });
   // online.js が読み込まれていれば、そちらが「ローカル対戦 / オンライン対戦」の
   // 選択画面(ロビー)を出して起動を引き継ぐ。online.js が無い場合(単体テストなど)は
   // 従来通りローカル対戦をそのまま起動する。
