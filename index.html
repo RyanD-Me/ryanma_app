@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-7kGBV5zQXiGCGiihlWbDTuAIkYE7JTmlxeJv9iqGc+A=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-sHSwR//MTLvt8RpSd2Z1Po7IehRhcxa0ZATLNVJAOtc=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-7kGBV5zQXiGCGiihlWbDTuAIkYE7JTmlxeJv9iqGc+A=' 'sha256-CkYiDAZzVpdw86hPZEKpC7z36e9adcq6LsU4JBUvAsM=' 'sha256-Gpf3RBNZS9K8vBB/CxcMAeSRpt1WZvJMqsHB6LtG64g=' 'sha256-Fx9dj4yq8nJbe21QeZ52hZp10cOYY2h9eVJG/pICaPk=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12629,7 +12629,7 @@ const MahjongLobby = (function () {
         last.dealer
       );
       const length = buildGameLengthField(last.gameLength);
-      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), cpu, time], "開始する", () => {
+      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), time, cpu], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
         const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };

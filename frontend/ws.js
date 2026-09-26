@@ -1741,7 +1741,7 @@ const MahjongLobby = (function () {
         last.dealer
       );
       const length = buildGameLengthField(last.gameLength);
-      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), cpu, time], "開始する", () => {
+      showOptionsScreen("CPU対戦の設定", [buildLengthDealerColumn(length, dealer), time, cpu], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
         const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };
