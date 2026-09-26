@@ -23,7 +23,10 @@
 
 const http = require("http");
 const { WebSocketServer } = require("ws");
-const { RoomRegistry, handleClientMessage } = require("./protocol");
+const { RoomRegistry, handleClientMessage, PROTOCOL_VERSION } = require("./protocol");
+
+/** 起動した時刻(/version で返す。再デプロイされたかどうかの目安) */
+const STARTED_AT = new Date().toISOString();
 
 const PORT = process.env.PORT || 8080;
 
@@ -38,6 +41,19 @@ const httpServer = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("ok");
+    return;
+  }
+  // 動いている版の確認用(自動デプロイで新しい版に入れ替わったかを外から確かめるため)。
+  // commit は Render が自動で設定する環境変数 RENDER_GIT_COMMIT(デプロイしたコミット)。
+  if (req.url === "/version") {
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(
+      JSON.stringify({
+        commit: process.env.RENDER_GIT_COMMIT || null,
+        protocol: PROTOCOL_VERSION,
+        startedAt: STARTED_AT,
+      })
+    );
     return;
   }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });

@@ -107,6 +107,13 @@ curl http://localhost:8080/health
 # => ok
 ```
 
+動いている版(デプロイしたコミット)と起動時刻は `/version` で確認できます(自動デプロイで入れ替わったかの確認用):
+
+```bash
+curl https://ryanma.onrender.com/version
+# => {"commit":"(Render が設定する RENDER_GIT_COMMIT)","protocol":2,"startedAt":"2026-09-26T..."}
+```
+
 ## 制約・注意点
 
 - アカウントの認証はありません。ルームコードを知っている人なら誰でも参加できます
