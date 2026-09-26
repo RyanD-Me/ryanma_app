@@ -44,7 +44,7 @@ const { RoomRegistry } = require("./roomRegistry");
  *   ping                      生存確認   → pong
  * アカウント(docs/account-spec.md。reqId を付けて送ると、返事にも同じ reqId が付く。失敗は account-error {op, message, reason}):
  *   hello {sessionToken, clientId, guestName}  接続の最初に名乗る → hello-ok {guest, name, sessionInvalid, guestNameError}
- *                                        (create/join/match の名前はここで決まる。ゲストは自分で決めた名前か「ゲストユーザーn」に
+ *                                        (create/join/match の名前はここで決まる。ゲストは自分で決めた名前か「Playern」に
  *                                         「(ゲスト)」を付けたもの。ゲストはルーム作成不可)
  *   guest-rename {name}                  ゲストの名前を決める → guest-renamed {name, baseName}(端末に baseName を保存し、以後 hello で送る)
  *   auth-start {mode, name, email, transferCode}  mode: register | login | delete(ログイン中) | email(メールアドレス変更)
@@ -200,7 +200,7 @@ function normalizeTimeControl(raw) {
 
 /**
  * create/join/match で使う名前。アカウント機能が有効なサーバー(registry.accounts がある)では、接続の最初に
- * hello で名乗った名前(ログイン中のアカウント名/ゲストユーザーn)を使い、クライアントが送る名前は使わない。
+ * hello で名乗った名前(ログイン中のアカウント名/ゲストの名前)を使い、クライアントが送る名前は使わない。
  * アカウント機能が無い(テスト等)場合は、これまでどおり送られてきた名前を使う。
  * @returns {{name: string|null, guest: boolean} | {error: string}}
  */

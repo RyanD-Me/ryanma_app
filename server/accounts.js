@@ -32,8 +32,8 @@ const START_MAX_PER_WINDOW = 5;
 const TRANSFER_TTL_MS = 24 * 60 * 60 * 1000;
 /** ユーザー名の最大文字数 */
 const MAX_USERNAME_LENGTH = 20;
-/** ゲストの既定の名前の頭(「ゲストユーザーn」) */
-const GUEST_PREFIX = "ゲストユーザー";
+/** ゲストの既定の名前の頭(「Playern(ゲスト)」) */
+const GUEST_PREFIX = "Player";
 /** ゲストの名前の後ろに付ける印(この印で終わる名前は登録できない) */
 const GUEST_SUFFIX = "(ゲスト)";
 
@@ -59,9 +59,9 @@ const EXT_PICT = /\p{Extended_Pictographic}/u;
  * @returns {{name: string} | {error: string}}
  */
 function validateUsername(raw) {
-  if (typeof raw !== "string") return { error: "ユーザー名を入力してください。" };
+  if (typeof raw !== "string") return { error: "名前を入力してください。" };
   const name = raw.normalize("NFC");
-  if (!name) return { error: "ユーザー名を入力してください。" };
+  if (!name) return { error: "名前を入力してください。" };
   const chars = Array.from(name);
   let visible = 0;
   let marks = 0;
@@ -71,20 +71,20 @@ function validateUsername(raw) {
     if (c === "‍") {
       const prev = chars[i - 1] === "️" ? chars[i - 2] : chars[i - 1];
       if (EXT_PICT.test(prev || "") && EXT_PICT.test(chars[i + 1] || "")) continue;
-      return { error: "ユーザー名に見えない文字は使えません。" };
+      return { error: "名前に見えない文字は使えません。" };
     }
     if (INVISIBLE.test(c)) {
-      return { error: /\p{Z}/u.test(c) ? "ユーザー名に空白は使えません。" : "ユーザー名に見えない文字は使えません。" };
+      return { error: /\p{Z}/u.test(c) ? "名前に空白は使えません。" : "名前に見えない文字は使えません。" };
     }
     if (/\p{M}/u.test(c)) {
-      if (++marks > 3) return { error: "ユーザー名に同じ文字へ4つ以上の記号を重ねることはできません。" };
+      if (++marks > 3) return { error: "名前に、同じ文字へ4つ以上の記号を重ねることはできません。" };
       continue;
     }
     marks = 0;
     visible++;
   }
-  if (visible === 0) return { error: "ユーザー名を入力してください。" };
-  if (visible > MAX_USERNAME_LENGTH) return { error: `ユーザー名は${MAX_USERNAME_LENGTH}文字までです。` };
+  if (visible === 0) return { error: "名前を入力してください。" };
+  if (visible > MAX_USERNAME_LENGTH) return { error: `名前は${MAX_USERNAME_LENGTH}文字までです。` };
   if (/[(（]ゲスト[)）]$/u.test(name)) return { error: `「${GUEST_SUFFIX}」で終わる名前は使えません。` };
   return { name };
 }
@@ -168,7 +168,7 @@ class AccountService {
 
   /**
    * 接続してきた人が誰か。自動ログインのトークンが有効ならそのアカウント、無ければゲスト。
-   * ゲストの名前は、自分で決めた名前(guestName。登録と同じ検査を通ったもの)か「ゲストユーザーn」に「(ゲスト)」を付けたもの。
+   * ゲストの名前は、自分で決めた名前(guestName。登録と同じ検査を通ったもの)か「Playern」に「(ゲスト)」を付けたもの。
    * @returns {Promise<{guest: boolean, name: string, accountId?: string, guestNameError?: string}>}
    */
   async identify({ sessionToken, clientId, guestName }) {

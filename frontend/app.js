@@ -3867,7 +3867,7 @@ class CpuMahjongApp extends MahjongApp {
     return this.cpuSeat();
   }
 
-  /** CPU対戦では、自分の名前はアカウントの名前(ゲストは「ゲストユーザーn」)、相手は型に応じて「CPU(○○型)」 */
+  /** CPU対戦では、自分の名前はアカウントの名前(ゲストは「○○(ゲスト)」)、相手は型に応じて「CPU(○○型)」 */
   playerName(seat) {
     if (seat !== this.cpuSeat()) {
       const name = typeof MahjongAccount !== "undefined" ? MahjongAccount.displayName() : null;

@@ -175,14 +175,14 @@ test("メールアドレスの変更: 引継ぎコードと新しいアドレス
 test("ゲスト番号: 同じ端末・同じ日は同じ番号、端末が違えば別の番号、日付(日本時間)が変わると振り直し", async () => {
   const env = setup();
   const g = (id) => env.accounts.identify({ clientId: id }).then((r) => r.name);
-  assert.equal(await g("devA"), "ゲストユーザー1(ゲスト)");
-  assert.equal(await g("devB"), "ゲストユーザー2(ゲスト)");
-  assert.equal(await g("devA"), "ゲストユーザー1(ゲスト)");
+  assert.equal(await g("devA"), "Player1(ゲスト)");
+  assert.equal(await g("devB"), "Player2(ゲスト)");
+  assert.equal(await g("devA"), "Player1(ゲスト)");
   const today = jstDateKey(env.clock.now);
   env.clock.now += 24 * 60 * 60 * 1000;
   assert.notEqual(jstDateKey(env.clock.now), today);
-  assert.equal(await g("devB"), "ゲストユーザー1(ゲスト)");
-  assert.equal(await g("devA"), "ゲストユーザー2(ゲスト)");
+  assert.equal(await g("devB"), "Player1(ゲスト)");
+  assert.equal(await g("devA"), "Player2(ゲスト)");
   // 日本時間の0時で切り替わる(UTC 15時)
   assert.equal(jstDateKey(Date.UTC(2026, 8, 26, 14, 59)), "20260926");
   assert.equal(jstDateKey(Date.UTC(2026, 8, 26, 15, 0)), "20260927");
@@ -217,7 +217,7 @@ test("通信: hello で名乗った名前で対局に入る。ゲストはルー
     sessionInvalid: false,
     protocol: PROTOCOL_VERSION,
   });
-  assert.equal(guest.received.at(-1).name, "ゲストユーザー1(ゲスト)");
+  assert.equal(guest.received.at(-1).name, "Player1(ゲスト)");
   // ゲストはルームを作れない
   handleClientMessage(registry, guest, { type: "create", protocol: PROTOCOL_VERSION });
   assert.match(guest.received.at(-1).message, /ユーザー登録/);
@@ -225,7 +225,7 @@ test("通信: hello で名乗った名前で対局に入る。ゲストはルー
   handleClientMessage(registry, host, { type: "create", protocol: PROTOCOL_VERSION, name: "なりすまし" });
   const code = host.received.find((m) => m.type === "created").code;
   handleClientMessage(registry, guest, { type: "join", protocol: PROTOCOL_VERSION, code, name: "たろう" });
-  assert.deepEqual(registry.namesFor(code), { east: "たろう", south: "ゲストユーザー1(ゲスト)" });
+  assert.deepEqual(registry.namesFor(code), { east: "たろう", south: "Player1(ゲスト)" });
   // 無効なトークンで名乗ったら sessionInvalid
   const x = fakeConn();
   handleClientMessage(registry, x, { type: "hello", reqId: 3, sessionToken: "z".repeat(40), clientId: "d3" });
@@ -299,7 +299,7 @@ test("ゲストの名前: 自分で決めた名前に「(ゲスト)」を付け�
   assert.throws(() => env.accounts.guestRename("はなこ(ゲスト)"), /で終わる名前/);
   assert.equal((await env.accounts.identify({ clientId: "d1", guestName: "はなこ" })).name, "はなこ(ゲスト)");
   const bad = await env.accounts.identify({ clientId: "d1", guestName: "は\u200Bなこ" });
-  assert.equal(bad.name, "ゲストユーザー1(ゲスト)");
+  assert.equal(bad.name, "Player1(ゲスト)");
   assert.match(bad.guestNameError, /見えない文字/);
   // 登録ユーザーと同じ名前でも、ゲストは「(ゲスト)」付きなので区別できる
   await runAuth(env, { mode: "register", name: "はなこ", email: "h@example.com" });

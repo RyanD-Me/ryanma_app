@@ -270,7 +270,7 @@ function getOrCreateClientId() {
  * ログイン状態と、アカウント関係のサーバーとのやり取り。
  * - 自動ログインのトークンは localStorage(SESSION_TOKEN_KEY)。トークンがあれば「ログイン中」とみなす
  *   (サーバーで無効と分かったら消す)。
- * - 名前(ログイン中のアカウント名/ゲストユーザーn)は、サーバーに名乗った結果(hello-ok)を覚えておく。
+ * - 名前(ログイン中のアカウント名/ゲストの名前「○○(ゲスト)」)は、サーバーに名乗った結果(hello-ok)を覚えておく。
  *   サーバーが起動に時間がかかる間も表示できるよう localStorage(IDENTITY_KEY)にも残す。
  * - アカウントの操作は、必要な時だけ開く専用の接続で行い、使い終わったら数秒で閉じる。
  */
@@ -361,7 +361,13 @@ const MahjongAccount = (() => {
   /** ゲストの名前を覚える(サーバーが確かめた名前 baseName と、表示する名前 name) */
   function setGuestName(baseName, name) {
     write(GUEST_NAME_KEY, baseName || null);
-    if (name) write(IDENTITY_KEY, JSON.stringify({ guest: true, name, date: jstToday() }));
+    if (name) {
+      write(IDENTITY_KEY, JSON.stringify({ guest: true, name, date: jstToday() }));
+    } else {
+      // 既定の名前に戻す: 名乗り直して「Playern(ゲスト)」を受け取る(次の操作で接続を開き直す)
+      write(IDENTITY_KEY, null);
+      closeSocket();
+    }
     emit();
   }
 
@@ -540,6 +546,8 @@ const MahjongAccount = (() => {
     applyHello,
     helloMessage,
     setGuestName,
+    /** ゲストが自分で決めた名前(「(ゲスト)」の前の部分。決めていなければ null) */
+    guestName: () => read(GUEST_NAME_KEY),
     setSession,
     clearSession,
     request,
@@ -2593,10 +2601,26 @@ const MahjongLobby = (function () {
       fieldsBox.appendChild(basicCol);
       wrap.appendChild(fieldsBox);
 
-      // プレイヤー名はアカウントの名前(ゲストは「ゲストユーザーn」で変えられない)。変更は「アカウント」から
+      // プレイヤー名: ログイン中はアカウントの名前(変更は「アカウント設定」から)。ゲストはここで直接変えられる
+      // (後ろに「(ゲスト)」が付く。空欄にすると既定の「Playern(ゲスト)」に戻る)
+      const loggedIn = MahjongAccount.isLoggedIn();
       const nameField = el("div", { className: "settings-field" });
       nameField.appendChild(el("span", { className: "settings-label", textContent: "プレイヤー名" }));
-      nameField.appendChild(el("span", { className: "settings-account-name", textContent: accountLabel() }));
+      let guestNameInput = null;
+      if (loggedIn) {
+        nameField.appendChild(el("span", { className: "settings-account-name", textContent: accountLabel() }));
+      } else {
+        const current = MahjongAccount.displayName() || "";
+        guestNameInput = el("input", {
+          type: "text",
+          maxLength: 40,
+          className: "lobby-code-input lobby-name-input",
+          value: MahjongAccount.guestName() || "",
+          placeholder: MahjongAccount.guestName() ? "" : current.replace(/\(ゲスト\)$/, "") || "Player",
+        });
+        nameField.appendChild(guestNameInput);
+        nameField.appendChild(el("span", { className: "settings-hint", textContent: "後ろに「(ゲスト)」が付きます。空欄にすると既定の名前に戻ります。" }));
+      }
       const accountBtn = el("button", {
         type: "button",
         className: "btn settings-reset-btn",
@@ -2686,7 +2710,29 @@ const MahjongLobby = (function () {
       const row = el("div", { className: "lobby-join-row" });
       const saveBtn = el("button", { type: "button", className: "btn btn-primary", textContent: "保存する" });
       const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
-      saveBtn.addEventListener("click", () => {
+      saveBtn.addEventListener("click", async () => {
+        // ゲストの名前(変わっていればサーバーで検査してから保存する。使えない名前なら画面に残って理由を出す)
+        if (guestNameInput) {
+          const next = guestNameInput.value.trim();
+          const prev = MahjongAccount.guestName() || "";
+          if (next !== prev) {
+            if (!next) {
+              MahjongAccount.setGuestName(null, null);
+              MahjongAccount.refresh().catch(() => {});
+            } else {
+              try {
+                saveBtn.disabled = true;
+                const r = await MahjongAccount.request({ type: "guest-rename", name: next });
+                MahjongAccount.setGuestName(r.baseName, r.name);
+              } catch (err) {
+                msg.textContent = err.message;
+                return;
+              } finally {
+                saveBtn.disabled = false;
+              }
+            }
+          }
+        }
         if (MahjongAccount.isLoggedIn() && typeof saveKifuSettings === "function") saveKifuSettings({ online: kifuOnlineCb.checked, cpu: kifuCpuCb.checked });
         MahjongSound.update({
           se: seCb.checked,
