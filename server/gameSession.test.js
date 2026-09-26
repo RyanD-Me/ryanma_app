@@ -284,11 +284,11 @@ test("鳴けない捨て牌でも、ときどき待ってから見送る(その�
   assert.equal(session.state.currentTurn, other);
 });
 
-test("見送りの待ちは毎回ではなく、確率で入る", () => {
+test("見送りの待ちは毎回ではなく、既定では約1/7の確率で入る", () => {
   let delayed = 0;
   let counted = 0;
   for (let i = 0; i < 200; i++) {
-    const { session } = newSession({ passDelayChance: 0.2 });
+    const { session } = newSession({ passDelayChance: undefined }); // 既定の確率(1/7)
     const turn = session.state.currentTurn;
     const other = turn === "east" ? "south" : "east";
     const cut = unCallableTile(session, turn);
@@ -298,7 +298,7 @@ test("見送りの待ちは毎回ではなく、確率で入る", () => {
     counted++;
     if (session.state.phase === "call_window") delayed++;
   }
-  assert.ok(delayed > counted * 0.08 && delayed < counted * 0.35, `待ちが入った回数: ${delayed}/${counted}`);
+  assert.ok(delayed > counted * 0.05 && delayed < counted * 0.25, `待ちが入った回数: ${delayed}/${counted}`);
 });
 
 test("持ち時間: サーバーも局ごとの残り時間を数え、切れたら打牌ごとの時間(+通信の余裕)で代わりに進める", () => {
@@ -354,7 +354,7 @@ test("持ち時間: 局が変わると局ごとの残り時間は満タンに戻
 test("見送りの待ちが入る設定(本番と同じ確率)でも、対局が最後まで進み、情報が漏れない", () => {
   for (let g = 0; g < 8; g++) {
     const rnd = seeded(777 + g);
-    const { session, timers } = newSession({ passDelayChance: 0.2 });
+    const { session, timers } = newSession({ passDelayChance: undefined }); // 既定の確率(1/7)
     let steps = 0;
     while (session.state.phase !== "game_end" && steps < 8000) {
       playRandomStep(session, rnd);
