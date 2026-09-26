@@ -640,3 +640,35 @@ test("create: gameLength を省略すると一荘戦(全8局)、half なら半�
   assert.equal(registry.rooms.get(c2).session.state.totalRounds, 4);
   assert.deepEqual(registry.ruleCounts(), { full: 2, half: 2 });
 });
+
+test("自動マッチングの相手待ち中は create/join/rejoin/spectate を受け付けない(マッチング成立で前のルームが残らない)", () => {
+  const registry = new RoomRegistry();
+  const [a, b, h, g] = ["a", "b", "h", "g"].map(fakeConn);
+  // 観戦できる対局と、参加できるルームを用意しておく
+  handleClientMessage(registry, h, { type: "create" });
+  const code = h.received.find((m) => m.type === "created").code;
+  handleClientMessage(registry, a, { type: "match" });
+  assert.equal(a.received.at(-1).type, "match-waiting");
+  handleClientMessage(registry, a, { type: "create" });
+  assert.equal(a.received.at(-1).type, "error");
+  handleClientMessage(registry, a, { type: "join", code });
+  assert.equal(a.received.at(-1).type, "error");
+  handleClientMessage(registry, a, { type: "rejoin", code, token: "x" });
+  assert.equal(a.received.at(-1).type, "rejoin-failed");
+  handleClientMessage(registry, g, { type: "join", code });
+  handleClientMessage(registry, a, { type: "spectate", code });
+  assert.equal(a.received.at(-1).type, "spectate-failed");
+  assert.equal(registry.roomCount(), 1);
+  assert.equal(registry.spectatingCode(a), null);
+  // マッチングが成立しても、余分なルームは無い。切断すればそのルームも片付く
+  handleClientMessage(registry, b, { type: "match" });
+  assert.equal(registry.roomCount(), 2);
+  registry.leaveRoom(a);
+  assert.equal(registry.roomCount(), 1);
+  // 相手待ちをやめた後は、普通にルームを作れる
+  const c = fakeConn("c");
+  handleClientMessage(registry, c, { type: "match" });
+  handleClientMessage(registry, c, { type: "cancel-match" });
+  handleClientMessage(registry, c, { type: "create" });
+  assert.equal(c.received.at(-1).type, "created");
+});

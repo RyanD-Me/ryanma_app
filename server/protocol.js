@@ -99,6 +99,14 @@ function handleClientMessage(registry, conn, msg) {
     return;
   }
 
+  // 自動マッチングの相手待ち中は、ほかのルームに入らない(入れてしまうと、マッチング成立時にこの接続が
+  // 新しいルームのものになり、先に入ったルームが切断しても片付けられずにサーバーに残り続ける)
+  if (registry.isQueued(conn) && ["create", "join", "rejoin", "spectate"].includes(msg.type)) {
+    const text = "自動マッチングの相手待ち中です。";
+    conn.send(msg.type === "spectate" ? { type: "spectate-failed", message: text } : { type: msg.type === "rejoin" ? "rejoin-failed" : "error", message: text });
+    return;
+  }
+
   if (msg.type === "ping") {
     conn.send({ type: "pong" });
     return;
