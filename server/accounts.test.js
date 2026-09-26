@@ -26,7 +26,7 @@ async function runAuth(env, params, rateKey = "ip1") {
   return env.accounts.completeAuth({ rid, secret: started.secret, code });
 }
 
-test("ユーザー名: 見えない文字・空白・全角スペース・ゲストユーザーで始まる名前は使えない", () => {
+test("ユーザー名: 見えない文字・空白・全角スペース・「(ゲスト)」で終わる名前は使えない", () => {
   assert.equal(validateUsername("たろう").name, "たろう");
   assert.equal(validateUsername("CPU").name, "CPU"); // CPU は使える
   assert.equal(validateUsername("ＣＰＵ").name, "ＣＰＵ");
@@ -36,7 +36,10 @@ test("ユーザー名: 見えない文字・空白・全角スペース・ゲス
   assert.ok(validateUsername("たろう‏").error); // 向きの目印(見えない)
   assert.equal(validateUsername("‮たろう").name, "‮たろう"); // 向きを変える記号は許可
   assert.equal(validateUsername("👨‍👩‍👧").name, "👨‍👩‍👧");
-  assert.ok(validateUsername("ゲストユーザー1").error);
+  assert.equal(validateUsername("ゲストユーザー1").name, "ゲストユーザー1"); // 使える
+  assert.ok(validateUsername("たろう(ゲスト)").error);
+  assert.ok(validateUsername("たろう（ゲスト）").error);
+  assert.equal(validateUsername("(ゲスト)たろう").name, "(ゲスト)たろう");
   assert.ok(validateUsername("あ".repeat(21)).error);
   assert.equal(validateUsername("あ".repeat(20)).name, "あ".repeat(20));
   assert.ok(validateUsername("").error);
@@ -172,14 +175,14 @@ test("メールアドレスの変更: 引継ぎコードと新しいアドレス
 test("ゲスト番号: 同じ端末・同じ日は同じ番号、端末が違えば別の番号、日付(日本時間)が変わると振り直し", async () => {
   const env = setup();
   const g = (id) => env.accounts.identify({ clientId: id }).then((r) => r.name);
-  assert.equal(await g("devA"), "ゲストユーザー1");
-  assert.equal(await g("devB"), "ゲストユーザー2");
-  assert.equal(await g("devA"), "ゲストユーザー1");
+  assert.equal(await g("devA"), "ゲストユーザー1(ゲスト)");
+  assert.equal(await g("devB"), "ゲストユーザー2(ゲスト)");
+  assert.equal(await g("devA"), "ゲストユーザー1(ゲスト)");
   const today = jstDateKey(env.clock.now);
   env.clock.now += 24 * 60 * 60 * 1000;
   assert.notEqual(jstDateKey(env.clock.now), today);
-  assert.equal(await g("devB"), "ゲストユーザー1");
-  assert.equal(await g("devA"), "ゲストユーザー2");
+  assert.equal(await g("devB"), "ゲストユーザー1(ゲスト)");
+  assert.equal(await g("devA"), "ゲストユーザー2(ゲスト)");
   // 日本時間の0時で切り替わる(UTC 15時)
   assert.equal(jstDateKey(Date.UTC(2026, 8, 26, 14, 59)), "20260926");
   assert.equal(jstDateKey(Date.UTC(2026, 8, 26, 15, 0)), "20260927");
@@ -205,8 +208,16 @@ test("通信: hello で名乗った名前で対局に入る。ゲストはルー
   handleClientMessage(registry, guest, { type: "hello", reqId: 2, clientId: "d2" });
   await flush();
   await flush();
-  assert.deepEqual(host.received.at(-1), { reqId: 1, type: "hello-ok", guest: false, name: "たろう", sessionInvalid: false, protocol: PROTOCOL_VERSION });
-  assert.equal(guest.received.at(-1).name, "ゲストユーザー1");
+  assert.deepEqual(host.received.at(-1), {
+    reqId: 1,
+    type: "hello-ok",
+    guest: false,
+    name: "たろう",
+    guestNameError: null,
+    sessionInvalid: false,
+    protocol: PROTOCOL_VERSION,
+  });
+  assert.equal(guest.received.at(-1).name, "ゲストユーザー1(ゲスト)");
   // ゲストはルームを作れない
   handleClientMessage(registry, guest, { type: "create", protocol: PROTOCOL_VERSION });
   assert.match(guest.received.at(-1).message, /ユーザー登録/);
@@ -214,7 +225,7 @@ test("通信: hello で名乗った名前で対局に入る。ゲストはルー
   handleClientMessage(registry, host, { type: "create", protocol: PROTOCOL_VERSION, name: "なりすまし" });
   const code = host.received.find((m) => m.type === "created").code;
   handleClientMessage(registry, guest, { type: "join", protocol: PROTOCOL_VERSION, code, name: "たろう" });
-  assert.deepEqual(registry.namesFor(code), { east: "たろう", south: "ゲストユーザー1" });
+  assert.deepEqual(registry.namesFor(code), { east: "たろう", south: "ゲストユーザー1(ゲスト)" });
   // 無効なトークンで名乗ったら sessionInvalid
   const x = fakeConn();
   handleClientMessage(registry, x, { type: "hello", reqId: 3, sessionToken: "z".repeat(40), clientId: "d3" });
@@ -251,4 +262,71 @@ test("通信: 登録からログイン中の操作(情報・名前変更・引�
   assert.equal((await send(c, { type: "transfer-issue" })).type, "transfer-code");
   assert.equal((await send(c, { type: "logout", sessionToken: done.token })).type, "logged-out");
   assert.equal((await send(c, { type: "account-info" })).type, "account-error");
+});
+
+test("Firebase の標準のページ経由: メールの中の合言葉(v)と確認済みの状態がそろえば認証コードを出す", async () => {
+  const env = setup();
+  const s = await env.accounts.startAuth({ mode: "register", name: "たろう", email: "taro@example.com" }, "ip1");
+  const mail = env.mailer.sent.at(-1);
+  const back = new URL(mail.continueUrl);
+  const v = back.searchParams.get("v");
+  assert.ok(v);
+  // 始めた端末には v を渡していない
+  assert.ok(!Object.values(s).includes(v));
+  // リンクを押す前(未確認)はコードを出さない
+  await assert.rejects(env.accounts.verifyLink({ rid: s.rid, v }), /確認がまだ済んでいません/);
+  env.mailer.clickDefault(mail.oobCode);
+  // v が違えば出さない(rid だけ知っている人=受付を始めた人には出せない)
+  await assert.rejects(env.accounts.verifyLink({ rid: s.rid, v: "x" + v }), /リンクが正しくありません/);
+  await assert.rejects(env.accounts.verifyLink({ rid: s.rid }), /リンクが正しくありません/);
+  const { code } = await env.accounts.verifyLink({ rid: s.rid, v });
+  const done = await env.accounts.completeAuth({ rid: s.rid, secret: s.secret, code });
+  assert.equal(done.name, "たろう");
+  // 2回目のログインも同じ流れ(送るたびに未確認に戻る)
+  const s2 = await env.accounts.startAuth({ mode: "login", name: "たろう" }, "ip1");
+  const m2 = env.mailer.sent.at(-1);
+  const v2 = new URL(m2.continueUrl).searchParams.get("v");
+  await assert.rejects(env.accounts.verifyLink({ rid: s2.rid, v: v2 }), /確認がまだ済んでいません/);
+  env.mailer.clickDefault(m2.oobCode);
+  const r2 = await env.accounts.verifyLink({ rid: s2.rid, v: v2 });
+  assert.ok((await env.accounts.completeAuth({ rid: s2.rid, secret: s2.secret, code: r2.code })).token);
+});
+
+test("ゲストの名前: 自分で決めた名前に「(ゲスト)」を付ける。使えない名前なら既定の名前", async () => {
+  const env = setup();
+  assert.deepEqual(env.accounts.guestRename("はなこ"), { name: "はなこ(ゲスト)", baseName: "はなこ" });
+  assert.throws(() => env.accounts.guestRename("はな こ"), /空白/);
+  assert.throws(() => env.accounts.guestRename("はなこ(ゲスト)"), /で終わる名前/);
+  assert.equal((await env.accounts.identify({ clientId: "d1", guestName: "はなこ" })).name, "はなこ(ゲスト)");
+  const bad = await env.accounts.identify({ clientId: "d1", guestName: "は\u200Bなこ" });
+  assert.equal(bad.name, "ゲストユーザー1(ゲスト)");
+  assert.match(bad.guestNameError, /見えない文字/);
+  // 登録ユーザーと同じ名前でも、ゲストは「(ゲスト)」付きなので区別できる
+  await runAuth(env, { mode: "register", name: "はなこ", email: "h@example.com" });
+  assert.equal((await env.accounts.identify({ clientId: "d2", guestName: "はなこ" })).name, "はなこ(ゲスト)");
+});
+
+test("通信: ゲストは guest-rename で名前を変えられ、その名前で対局に入る", async () => {
+  const env = setup();
+  const registry = new RoomRegistry();
+  registry.accounts = env.accounts;
+  const c = fakeConn();
+  const send = async (msg) => {
+    handleClientMessage(registry, c, msg);
+    for (let i = 0; i < 5; i++) await flush();
+    return c.received.at(-1);
+  };
+  await send({ type: "hello", clientId: "d", guestName: "はなこ" });
+  assert.equal(c.received.at(-1).name, "はなこ(ゲスト)");
+  const r = await send({ type: "guest-rename", name: "はなこ2" });
+  assert.deepEqual({ type: r.type, name: r.name, baseName: r.baseName }, { type: "guest-renamed", name: "はなこ2(ゲスト)", baseName: "はなこ2" });
+  assert.equal((await send({ type: "guest-rename", name: "" })).type, "account-error");
+  const host = fakeConn();
+  const a = await runAuth(env, { mode: "register", name: "たろう", email: "t@example.com" });
+  handleClientMessage(registry, host, { type: "hello", sessionToken: a.token });
+  for (let i = 0; i < 5; i++) await flush();
+  handleClientMessage(registry, host, { type: "create", protocol: PROTOCOL_VERSION });
+  const code = host.received.find((m) => m.type === "created").code;
+  handleClientMessage(registry, c, { type: "join", protocol: PROTOCOL_VERSION, code });
+  assert.deepEqual(registry.namesFor(code), { east: "たろう", south: "はなこ2(ゲスト)" });
 });

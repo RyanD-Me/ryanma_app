@@ -159,11 +159,14 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - プレイヤー名はサーバーで正規化する(`protocol.js` の `normalizePlayerName`): 見えない文字は禁止(取り除く。絵文字をつなぐゼロ幅接合子だけ残す)、
   結合文字は1文字につき3つまで、文字の向きを変える記号は許可するが閉じていないものを閉じ、名前全体を FSI…PDI で囲んで外側の表示を崩さない。
 - **アカウント(第1段階。仕様は `docs/account-spec.md`)**: 通信方式は `protocol: 3`。接続したら最初に `hello {sessionToken, clientId}` で名乗り、
-  サーバーが名前を決める(ログイン中はアカウント名、ゲストは「ゲストユーザーn」。create/join/match でクライアントが送る名前は使わない)。
+  サーバーが名前を決める(ログイン中はアカウント名、ゲストは自分で決めた名前(localStorage `mahjong_guest_name`、hello の guestName)か
+  「ゲストユーザーn」に「(ゲスト)」を付けたもの。create/join/match でクライアントが送る名前は使わない)。「(ゲスト)」で終わるユーザー名は禁止。
   `WsRoomController` は hello の返事を待ってから本来の要求を送る。ゲストはルーム作成・牌譜を使えない(ロビーのボタンも出さない)。
   - 登録・ログイン・削除・メールアドレス変更は共通の流れ: `auth-start` → Firebase の「メールアドレス確認メール」
-    (送るたびにアドレスを未確認に戻す)→ メールのリンクで公開ページが `?mode=verifyEmail&oobCode=…&continueUrl=…?rid=…` で開く
-    (確認ページ `showVerifyPage`)→ サーバーが oobCode を確かめ6桁の認証コードを表示 → 元の画面で `auth-complete` に入力。
+    (送るたびにアドレスを未確認に戻す)→ リンクで Firebase の標準のページが開いて確認済みになり、「続行」で公開ページが `?rid=…&v=…` で開く
+    (確認ページ `showVerifyPage`。v はメールの中にだけ書く合言葉)→ サーバーが v と確認済みの状態を確かめ6桁の認証コードを表示
+    → 元の画面で `auth-complete` に入力。アクション URL を公開ページにした場合の `?mode=verifyEmail&oobCode=…` にも対応。
+    ローカル(鍵なし)ではログに出る `/dev/verify?oob=…` を開くと「標準のページで押した」ことになる。
     受付(rid と始めた端末だけが知る secret)はサーバーのメモリ上(30分)、端末では localStorage `mahjong_auth_pending`(読み込み直しても続きから)。
   - サーバー: `accounts.js`(流れ・検査)/ `accountStore.js`(Firestore のデータ。テストは `MemoryDocStore`)/ `authMailer.js` /
     `firebaseClient.js`(追加パッケージなしの REST)。鍵は Render の環境変数 `FIREBASE_SERVICE_ACCOUNT`(無いとメモリ上+偽メールで動く)。

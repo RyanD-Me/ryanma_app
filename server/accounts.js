@@ -4,9 +4,12 @@
  * アカウント機能の流れ(docs/account-spec.md の「1. 登録・ログイン」〜「6. 削除・メールアドレス変更」)。
  *
  * 認証の流れ(登録・ログイン・削除・メールアドレス変更で共通):
- *   1. startAuth: 受付(rid)と、始めた端末だけが知る合言葉(secret)を作り、確認メールを送る。
- *      メールのリンクは公開ページ(publicUrl)に ?rid=… 付きで戻ってくる(continueUrl)。
- *   2. verifyLink: 確認ページがリンクの oobCode を送ってくる → Firebase で確かめ、6桁の認証コードを作って返す。
+ *   1. startAuth: 受付(rid)と、始めた端末だけが知る合言葉(secret)と、メールの中にだけ書く合言葉(v)を作り、確認メールを送る。
+ *      メールのリンクの戻り先(continueUrl)は公開ページ(publicUrl)の ?rid=…&v=…。
+ *   2. verifyLink: 確認ページから。次のどちらかで「メールの持ち主がリンクを押した」ことを確かめ、6桁の認証コードを作って返す。
+ *      - Firebase の標準のページでアドレスの確認が済み、「続行」で戻ってきた: rid と v(メールの中にしか無い)が一致し、
+ *        Firebase のアカウントが確認済みになっている(送るたびに未確認に戻している)
+ *      - アクション URL を公開ページにしている場合: リンクの oobCode を Firebase に適用できた
  *   3. completeAuth: 始めた端末が rid・secret・認証コードを送ってくる → 一致すれば登録/ログイン等を行う。
  * 受付はメモリ上に置く(サーバーが再起動したらやり直し)。
  */
@@ -29,8 +32,10 @@ const START_MAX_PER_WINDOW = 5;
 const TRANSFER_TTL_MS = 24 * 60 * 60 * 1000;
 /** ユーザー名の最大文字数 */
 const MAX_USERNAME_LENGTH = 20;
-/** ゲストの名前の頭(登録するユーザー名には使えない) */
+/** ゲストの既定の名前の頭(「ゲストユーザーn」) */
 const GUEST_PREFIX = "ゲストユーザー";
+/** ゲストの名前の後ろに付ける印(この印で終わる名前は登録できない) */
+const GUEST_SUFFIX = "(ゲスト)";
 
 class AccountError extends Error {
   /** message はそのまま利用者に見せてよい文言 */
@@ -50,7 +55,7 @@ const EXT_PICT = /\p{Extended_Pictographic}/u;
  * 登録するユーザー名を検査する。問題なければ NFC に正規化した名前、だめなら理由の文言を返す。
  * 見えない文字(空白・全角スペース・ゼロ幅文字・向きの目印 LRM/RLM など)は禁止。
  * 文字の向きを変える記号(埋め込み・上書き・分離)は許可(表示時に名前の中に閉じ込める)。
- * 絵文字どうしをつなぐゼロ幅接合子は許可。結合文字は1文字につき3つまで。「ゲストユーザー」で始まる名前は禁止。
+ * 絵文字どうしをつなぐゼロ幅接合子は許可。結合文字は1文字につき3つまで。「(ゲスト)」で終わる名前は禁止。
  * @returns {{name: string} | {error: string}}
  */
 function validateUsername(raw) {
@@ -80,7 +85,7 @@ function validateUsername(raw) {
   }
   if (visible === 0) return { error: "ユーザー名を入力してください。" };
   if (visible > MAX_USERNAME_LENGTH) return { error: `ユーザー名は${MAX_USERNAME_LENGTH}文字までです。` };
-  if (name.startsWith(GUEST_PREFIX)) return { error: `「${GUEST_PREFIX}」で始まる名前は使えません。` };
+  if (/[(（]ゲスト[)）]$/u.test(name)) return { error: `「${GUEST_SUFFIX}」で終わる名前は使えません。` };
   return { name };
 }
 
@@ -163,16 +168,32 @@ class AccountService {
 
   /**
    * 接続してきた人が誰か。自動ログインのトークンが有効ならそのアカウント、無ければゲスト。
-   * @returns {Promise<{guest: boolean, name: string, accountId?: string}>}
+   * ゲストの名前は、自分で決めた名前(guestName。登録と同じ検査を通ったもの)か「ゲストユーザーn」に「(ゲスト)」を付けたもの。
+   * @returns {Promise<{guest: boolean, name: string, accountId?: string, guestNameError?: string}>}
    */
-  async identify({ sessionToken, clientId }) {
+  async identify({ sessionToken, clientId, guestName }) {
     if (sessionToken) {
       const acc = await this.store.getSessionAccount(sessionToken);
       if (acc) return { guest: false, name: acc.name, accountId: acc.id };
     }
+    let guestNameError;
+    if (typeof guestName === "string" && guestName) {
+      const v = validateUsername(guestName);
+      if (v.name) return { guest: true, name: `${v.name}${GUEST_SUFFIX}` };
+      guestNameError = v.error;
+    }
     const id = typeof clientId === "string" && clientId.trim() ? clientId.trim().slice(0, 100) : crypto.randomBytes(8).toString("hex");
     const n = await this.store.guestNumber(jstDateKey(this.now()), id);
-    return { guest: true, name: `${GUEST_PREFIX}${n}` };
+    const r = { guest: true, name: `${GUEST_PREFIX}${n}${GUEST_SUFFIX}` };
+    if (guestNameError) r.guestNameError = guestNameError;
+    return r;
+  }
+
+  /** ゲストの名前を決める(登録と同じ検査。保存は端末側で、以後の名乗りで送られてくる) */
+  guestRename(newName) {
+    const v = validateUsername(newName);
+    if (v.error) throw new AccountError(v.error, "name");
+    return { name: `${v.name}${GUEST_SUFFIX}`, baseName: v.name };
   }
 
   /** オプション画面に出すアカウントの情報 */
@@ -242,11 +263,14 @@ class AccountService {
     this._checkStartRate(rateKey);
     const rid = crypto.randomBytes(12).toString("base64url");
     const secret = crypto.randomBytes(24).toString("base64url");
+    // メールの中(リンクの戻り先)にだけ書く合言葉。始めた端末には渡さない
+    const vtoken = crypto.randomBytes(18).toString("base64url");
     const now = this.now();
     const req = {
       rid,
       mode,
       secretHash: sha256(secret),
+      vtoken,
       email,
       name,
       accountId,
@@ -264,7 +288,10 @@ class AccountService {
 
   async _send(req) {
     try {
-      req.authUid = await this.mailer.sendLink(req.email, `${this.publicUrl}?rid=${encodeURIComponent(req.rid)}`);
+      req.authUid = await this.mailer.sendLink(
+        req.email,
+        `${this.publicUrl}?rid=${encodeURIComponent(req.rid)}&v=${encodeURIComponent(req.vtoken)}`
+      );
     } catch (err) {
       if (err && /TOO_MANY_ATTEMPTS/.test(err.code || err.message || "")) {
         throw new AccountError("メールの送信が混み合っています。1分ほど待ってからお試しください。", "rate");
@@ -298,23 +325,41 @@ class AccountService {
   }
 
   /**
-   * 確認ページから: メールのリンクの oobCode を確かめ、認証コードを作る。
+   * 確認ページから: メールの持ち主がリンクを押したことを確かめ、認証コードを作る
+   * (v: リンクの戻り先の合言葉。oobCode: アクション URL を公開ページにしている場合のリンクの確認情報)。
    * @returns {Promise<{code: string, requestedAt: number, mode: string}>}
    */
-  async verifyLink({ rid, oobCode }) {
+  async verifyLink({ rid, oobCode, v }) {
     const req = this._getRequest(rid);
-    if (typeof oobCode !== "string" || !oobCode || oobCode.length > 512) throw new AccountError("リンクが正しくありません。", "link");
-    let email;
-    try {
-      email = await this.mailer.applyCode(oobCode);
-    } catch (err) {
-      throw new AccountError("このリンクは使用済みか、有効期限が切れています。ゲームの画面からメールを送り直してください。", "link");
-    }
-    if (!email || email.toLowerCase() !== req.email.toLowerCase()) {
-      throw new AccountError("このリンクは、この受付のものではありません。", "link");
+    if (typeof oobCode === "string" && oobCode) {
+      if (oobCode.length > 512) throw new AccountError("リンクが正しくありません。", "link");
+      let email;
+      try {
+        email = await this.mailer.applyCode(oobCode);
+      } catch (err) {
+        throw new AccountError("このリンクは使用済みか、有効期限が切れています。ゲームの画面からメールを送り直してください。", "link");
+      }
+      if (!email || email.toLowerCase() !== req.email.toLowerCase()) {
+        throw new AccountError("このリンクは、この受付のものではありません。", "link");
+      }
+    } else {
+      if (typeof v !== "string" || !safeEqualHex(sha256(req.vtoken), sha256(v))) {
+        throw new AccountError("リンクが正しくありません。メールに届いたリンクから開いてください。", "link");
+      }
+      let verified = false;
+      try {
+        verified = await this.mailer.isVerified(req.email);
+      } catch (err) {
+        throw new AccountError("確認できませんでした。しばらくしてからもう一度開いてください。", "send");
+      }
+      if (!verified) {
+        throw new AccountError("メールアドレスの確認がまだ済んでいません。メールのリンクを押して、表示されたページの「続行」を押してください。", "pending");
+      }
     }
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-    req.code = { hash: sha256(`${req.rid}:${code}`), expiresAt: this.now() + CODE_TTL_MS, attempts: 0 };
+    // 読み込み直しなどで発行し直しても、間違えた回数は引き継ぐ
+    const attempts = req.code ? req.code.attempts : 0;
+    req.code = { hash: sha256(`${req.rid}:${code}`), expiresAt: this.now() + CODE_TTL_MS, attempts };
     req.expiresAt = Math.max(req.expiresAt, req.code.expiresAt);
     return { code, requestedAt: req.createdAt, mode: req.mode };
   }
@@ -428,6 +473,7 @@ module.exports = {
   jstDateKey,
   normalizeTransferCode,
   GUEST_PREFIX,
+  GUEST_SUFFIX,
   CODE_MAX_ATTEMPTS,
   RESEND_INTERVAL_MS,
   TRANSFER_TTL_MS,

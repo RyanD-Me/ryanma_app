@@ -42,6 +42,12 @@ class FirebaseAuthMailer {
     return this.client.applyVerifyCode(oobCode);
   }
 
+  /** そのアドレスの Firebase のアカウントが確認済みか(送るたびに未確認に戻しているので、リンクが押されたか) */
+  async isVerified(email) {
+    const user = await this.client.lookupByEmail(email);
+    return !!(user && user.emailVerified);
+  }
+
   async deleteAuthUser(authUid) {
     if (authUid) await this.client.deleteAuthUser(authUid);
   }
@@ -53,6 +59,7 @@ class FakeAuthMailer {
     this.onSend = opts.onSend || null;
     this.codes = new Map(); // oobCode -> email
     this.users = new Map(); // email -> authUid
+    this.verified = new Map(); // email -> 確認済みか
     this.sent = [];
   }
 
@@ -61,6 +68,8 @@ class FakeAuthMailer {
     if (!this.users.has(key)) this.users.set(key, "fake-" + crypto.randomBytes(6).toString("hex"));
     const oobCode = crypto.randomBytes(12).toString("hex");
     this.codes.set(oobCode, email);
+    this.verified.set(key, false);
+    // link: アクション URL を公開ページにしている場合のリンク / continueUrl: Firebase の標準のページの「続行」の行き先
     const link = `${continueUrl.split("?")[0]}?mode=verifyEmail&oobCode=${oobCode}&continueUrl=${encodeURIComponent(continueUrl)}`;
     const info = { email, link, oobCode, continueUrl };
     this.sent.push(info);
@@ -72,7 +81,21 @@ class FakeAuthMailer {
     const email = this.codes.get(oobCode);
     if (!email) throw Object.assign(new Error("INVALID_OOB_CODE"), { code: "INVALID_OOB_CODE" });
     this.codes.delete(oobCode);
+    this.verified.set(email.toLowerCase(), true);
     return email;
+  }
+
+  /** Firebase の標準のページでリンクを押した(アドレスが確認済みになる)ことにする。テスト・ローカルでの確認用 */
+  clickDefault(oobCode) {
+    const email = this.codes.get(oobCode);
+    if (!email) return false;
+    this.codes.delete(oobCode);
+    this.verified.set(email.toLowerCase(), true);
+    return true;
+  }
+
+  async isVerified(email) {
+    return !!this.verified.get(String(email).toLowerCase());
   }
 
   async deleteAuthUser(authUid) {

@@ -43,12 +43,14 @@ const { RoomRegistry } = require("./roomRegistry");
  *   stop-spectate             観戦をやめる
  *   ping                      生存確認   → pong
  * アカウント(docs/account-spec.md。reqId を付けて送ると、返事にも同じ reqId が付く。失敗は account-error {op, message, reason}):
- *   hello {sessionToken, clientId}      接続の最初に名乗る → hello-ok {guest, name, sessionInvalid}
- *                                        (create/join/match の名前はここで決まる。ゲストは「ゲストユーザーn」。ゲストはルーム作成不可)
+ *   hello {sessionToken, clientId, guestName}  接続の最初に名乗る → hello-ok {guest, name, sessionInvalid, guestNameError}
+ *                                        (create/join/match の名前はここで決まる。ゲストは自分で決めた名前か「ゲストユーザーn」に
+ *                                         「(ゲスト)」を付けたもの。ゲストはルーム作成不可)
+ *   guest-rename {name}                  ゲストの名前を決める → guest-renamed {name, baseName}(端末に baseName を保存し、以後 hello で送る)
  *   auth-start {mode, name, email, transferCode}  mode: register | login | delete(ログイン中) | email(メールアドレス変更)
  *                                        → 確認メールを送り auth-started {rid, secret, email(一部伏せ字), resendAfterMs}
  *   auth-resend {rid, secret}            メールを送り直す → auth-resent
- *   auth-verify {rid, oobCode}           確認ページから(メールのリンクの oobCode)→ auth-code {code, requestedAt, mode}
+ *   auth-verify {rid, v, oobCode}        確認ページから(リンクの戻り先の合言葉 v、またはリンクの oobCode)→ auth-code {code, requestedAt, mode}
  *   auth-complete {rid, secret, code}    認証コードを入力 → auth-done {token, name} | {deleted: true}
  *   account-info                         → account-info {name, email, nameChangeAvailableAt}
  *   account-rename {name}                → account-renamed {name}
@@ -215,6 +217,7 @@ const ACCOUNT_MESSAGES = new Set([
   "auth-resend",
   "auth-verify",
   "auth-complete",
+  "guest-rename",
   "account-info",
   "account-rename",
   "transfer-issue",
@@ -237,12 +240,17 @@ async function handleAccountMessage(registry, conn, msg) {
   try {
     switch (msg.type) {
       case "hello": {
-        const id = await accounts.identify({ sessionToken: msg.sessionToken, clientId: normalizeClientId(msg.clientId) });
-        conn.identity = id;
+        const id = await accounts.identify({
+          sessionToken: msg.sessionToken,
+          clientId: normalizeClientId(msg.clientId),
+          guestName: typeof msg.guestName === "string" ? msg.guestName.slice(0, 100) : undefined,
+        });
+        conn.identity = { guest: id.guest, name: id.name, accountId: id.accountId };
         reply({
           type: "hello-ok",
           guest: id.guest,
           name: id.name,
+          guestNameError: id.guestNameError || null,
           // 自動ログインのトークンが送られてきたのに無効だった(削除・メール変更などで)。クライアントは消してよい
           sessionInvalid: !!msg.sessionToken && id.guest,
           protocol: PROTOCOL_VERSION,
@@ -262,8 +270,15 @@ async function handleAccountMessage(registry, conn, msg) {
         reply(Object.assign({ type: "auth-resent" }, r));
         return;
       }
+      case "guest-rename": {
+        if (accountId) throw Object.assign(new Error("ログイン中の名前は「名前を変更」から変えてください。"), { reason: "account" });
+        const r = accounts.guestRename(msg.name);
+        conn.identity = Object.assign({}, conn.identity, { guest: true, name: r.name });
+        reply(Object.assign({ type: "guest-renamed" }, r));
+        return;
+      }
       case "auth-verify": {
-        const r = await accounts.verifyLink({ rid: msg.rid, oobCode: msg.oobCode });
+        const r = await accounts.verifyLink({ rid: msg.rid, oobCode: msg.oobCode, v: msg.v });
         reply(Object.assign({ type: "auth-code" }, r));
         return;
       }

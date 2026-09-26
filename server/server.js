@@ -66,7 +66,12 @@ registry.accounts = new AccountService({
   store: new AccountStore({ docs: firebaseClient || new MemoryDocStore() }),
   mailer: firebaseClient
     ? new FirebaseAuthMailer({ client: firebaseClient })
-    : new FakeAuthMailer({ onSend: ({ email, link }) => console.log(`[動作確認用] ${email} 宛てのログイン用リンク: ${link}`) }),
+    : new FakeAuthMailer({
+        onSend: ({ email, link, oobCode, continueUrl }) => {
+          console.log(`[動作確認用] ${email} 宛てのログイン用リンク: ${link}`);
+          console.log(`[動作確認用] ${email} 宛て(標準のページ経由): http://localhost:${PORT}/dev/verify?oob=${oobCode} を開いた後、続行: ${continueUrl}`);
+        },
+      }),
   publicUrl: PUBLIC_URL,
 });
 if (!firebaseClient) console.log("アカウント機能: Firebase の鍵が無いため、メモリ上で動かします(動作確認用)");
@@ -97,6 +102,14 @@ const httpServer = http.createServer((req, res) => {
   }
   // 動いている版の確認用(自動デプロイで新しい版に入れ替わったかを外から確かめるため)。
   // commit は Render が自動で設定する環境変数 RENDER_GIT_COMMIT(デプロイしたコミット)。
+  // 動作確認用(Firebase の鍵が無いときだけ): 「Firebase の標準のページでリンクを押した」ことにする
+  if (!firebaseClient && req.url.startsWith("/dev/verify?")) {
+    const oob = new URL(req.url, "http://localhost").searchParams.get("oob");
+    const ok = registry.accounts.mailer.clickDefault(oob);
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end(ok ? "メールアドレスを確認しました(動作確認用)" : "無効なリンクです");
+    return;
+  }
   if (req.url === "/health/firebase") {
     checkFirebase().then((r) => {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });

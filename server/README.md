@@ -56,8 +56,8 @@
 - `FIREBASE_SERVICE_ACCOUNT` が無いと、動作確認用にメモリ上で動きます(メールは送らず、リンクをログに出す。
   サーバーを止めるとデータは消える)。ローカルでの確認は `PORT=8090 PUBLIC_URL=file:///…/index.html node server/server.js`。
 - `https://<サーバー>/health/firebase` で Firebase につながるかを確認できます(`{"mode":"firebase","ok":true}` なら正常)。
-- Firebase 側の設定: Authentication のメール/パスワードを有効、承認済みドメインに `ryand-me.github.io`、
-  テンプレート「メールアドレスの確認」の言語を日本語・「アクション URL」を公開ページ(`https://ryand-me.github.io/ryanma_app/`)に。
+- Firebase 側の設定: Authentication のメール/パスワードを有効、承認済みドメインに `ryand-me.github.io`、テンプレートの言語を日本語。
+  アクション URL は変えなくてよい(メールのリンク → Firebase の標準のページ →「続行」で公開ページに戻る)。
 
 ## 自動マッチングについて
 
