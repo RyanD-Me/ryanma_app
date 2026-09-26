@@ -208,6 +208,7 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - スマホは「タップ(指を離した時)」の中でしか音を開始できないので、`click`/`touchend` 等のたびに準備を試みる。
 - 設定はオプション画面(効果音/発声/BGM/消音と、SE音量 `volume`・ボイス音量 `voiceVolume`・BGM音量 `bgmVolume` の3つを別々に)と
   対局画面のスピーカーボタン(消音)。localStorage `mahjong_sound_settings`(`voiceVolume` が無い古い設定は `volume` を引き継ぐ)。
+  オプションの「試しに鳴らす」は 決定音(press)→ 0.25秒後に打牌音(Web Audio の時刻で予約)→ 0.8秒後に「リーチ」の発声。
 - 動作確認用に `window.__mahjongSoundLog = []` を入れておくと、鳴らした音の名前が記録される。
 
 ### その他の主な仕様

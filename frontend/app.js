@@ -427,7 +427,11 @@ const MahjongSound = (() => {
     return 0;
   }
 
-  function playSample(name, vol) {
+  /**
+   * 音声ファイルを鳴らす。delaySec 秒後に鳴らす場合は Web Audio の時刻で予約する(タイマーで遅らせると、
+   * スマホでは操作の外とみなされて鳴らないことがあるため、鳴らす予約自体は操作の中で行う)。
+   */
+  function playSample(name, vol, delaySec = 0) {
     const c = audioContext();
     const buf = sampleBuffers[name];
     if (!c || !buf) return false;
@@ -437,9 +441,13 @@ const MahjongSound = (() => {
     const gain = c.createGain();
     gain.gain.value = vol;
     src.connect(gain).connect(c.destination);
-    src.start(0, sampleOffsets[name] || 0);
-    // 動作確認用: window.__mahjongSoundLog に配列を入れておくと、鳴らした音の名前を記録する
-    if (typeof window !== "undefined" && Array.isArray(window.__mahjongSoundLog)) window.__mahjongSoundLog.push(name);
+    src.start(delaySec > 0 ? c.currentTime + delaySec : 0, sampleOffsets[name] || 0);
+    // 動作確認用: window.__mahjongSoundLog に配列を入れておくと、鳴らした音の名前を記録する(予約した音は鳴る時刻に)
+    if (typeof window !== "undefined" && Array.isArray(window.__mahjongSoundLog)) {
+      const log = () => window.__mahjongSoundLog.push(name);
+      if (delaySec > 0) setTimeout(log, delaySec * 1000);
+      else log();
+    }
     return true;
   }
 
@@ -556,20 +564,22 @@ const MahjongSound = (() => {
   }
 
   /** ツモ音・打牌音(dahai1〜3 からランダム、直前と同じ音は避ける)。riichi ならリーチ宣言牌の音 */
-  function playDahai(cfg, riichi) {
+  function playDahai(cfg, riichi, delaySec = 0) {
     if (cfg.muted || !cfg.se || cfg.volume <= 0) return;
-    if (riichi && playSample("dahai_riichi", cfg.volume)) return;
+    if (riichi && playSample("dahai_riichi", cfg.volume, delaySec)) return;
     const name = pickRandom(DAHAI_SOUNDS, lastDahai);
-    if (playSample(name, cfg.volume)) {
+    if (playSample(name, cfg.volume, delaySec)) {
       lastDahai = name;
       return;
     }
-    synthDiscard(cfg.volume); // 音声ファイルが使えない場合の代わり
+    // 音声ファイルが使えない場合の代わり
+    if (delaySec > 0) setTimeout(() => synthDiscard(cfg.volume), delaySec * 1000);
+    else synthDiscard(cfg.volume);
   }
 
-  function playDiscard(cfg) {
-    playDahai(cfg, false);
-  }
+  /** 試聴(オプション画面の「試しに鳴らす」): 決定音から打牌音までの間(秒)と、発声までの間(ミリ秒) */
+  const PREVIEW_DISCARD_DELAY_SEC = 0.25;
+  const PREVIEW_VOICE_DELAY_MS = 800;
 
   function playVoice(word, cfg) {
     const vol = typeof cfg.voiceVolume === "number" ? cfg.voiceVolume : cfg.volume;
@@ -736,15 +746,17 @@ const MahjongSound = (() => {
     voice(word) {
       playVoice(word, settings);
     },
-    /** オプション画面の試聴用: 保存前の設定(opts)で打牌音と発声を1回ずつ鳴らす(消音中でも鳴らす) */
+    /**
+     * オプション画面の試聴用: 保存前の設定(opts)で、ボタンの決定音(押した時に鳴る)の後に打牌音、
+     * その後に「リーチ」の発声を鳴らす(消音中でも鳴らす)。
+     */
     preview(opts) {
-      // ボタンを押した操作の中で直接鳴らす(タイマー等で遅らせると、スマホでは操作の外と
-      // みなされて鳴らないことがある)。読み上げは準備に少し時間がかかるので、打牌音と
-      // 同時に呼んでも実際には打牌音の後に聞こえる。
+      // 打牌音は操作の中で Web Audio の時刻で予約する(タイマーで遅らせるとスマホでは鳴らないことがある)。
+      // 発声は unlock() で操作の中で準備済みなので、タイマーで遅らせても鳴る。
       unlock();
       const cfg = Object.assign({}, settings, opts, { muted: false });
-      playDiscard(cfg);
-      playVoice("リーチ", cfg);
+      playDahai(cfg, false, PREVIEW_DISCARD_DELAY_SEC);
+      setTimeout(() => playVoice("リーチ", cfg), PREVIEW_VOICE_DELAY_MS);
     },
     getSettings() {
       return Object.assign({}, settings);
