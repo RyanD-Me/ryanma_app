@@ -61,3 +61,21 @@ test("有効な裏ドラ表示牌は、表をめくった枚数と同じにな�
   wall = revealNextDoraIndicator(wall);
   assert.strictEqual(activeUraDoraIndicators(wall).length, 2);
 });
+
+test("シード値を渡すと同じ牌山になり、乱数関数を渡すとそれでシャッフルする", () => {
+  const ids = (w) => [...w.liveWall, ...w.deadWallDraws, ...w.doraIndicatorTiles, ...w.uraDoraIndicatorTiles].map((t) => t.id);
+  // シード値は再現できる(これまでどおり)
+  assert.deepStrictEqual(ids(buildWall(7).wall), ids(buildWall(7).wall));
+  assert.strictEqual(buildWall(7).seed, 7);
+  // 乱数関数を渡した場合(オンライン対戦のサーバーは暗号用の乱数を渡す)
+  const crypto = require("node:crypto");
+  const built = buildWall(() => crypto.randomInt(0, 2 ** 48 - 1) / 2 ** 48);
+  assert.strictEqual(built.seed, null);
+  const all = ids(built.wall);
+  assert.strictEqual(all.length, 80);
+  assert.strictEqual(new Set(all).size, 80);
+  assert.strictEqual(built.wall.liveWall.length, 66);
+  // 常に0を返す乱数関数なら、決まった並びになる(関数が実際に使われている)
+  assert.deepStrictEqual(ids(buildWall(() => 0).wall), ids(buildWall(() => 0).wall));
+  assert.notDeepStrictEqual(ids(buildWall(() => 0).wall), ids(buildWall(() => 0.999).wall));
+});

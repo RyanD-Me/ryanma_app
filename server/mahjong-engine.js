@@ -264,11 +264,19 @@ function shuffleTiles(tiles, rng) {
  *
  * seed を渡すとその値から決定的にシャッフルする(再現・検証用)。
  * 渡さない場合はランダムなシードを都度生成する。
+ * 乱数関数(0以上1未満を返す)を渡すと、それでシャッフルする。オンライン対戦のサーバーは、
+ * 配牌から逆算されないよう暗号用の乱数を渡す(シード値は32ビットしかなく、自分の配牌13枚と
+ * ドラ表示牌から総当たりで牌山全体を割り出せてしまうため)。
  */
 function buildWall(seed) {
+    if (typeof seed === "function") {
+        return { wall: layoutWall(shuffleTiles(createFullTileSet(), seed)), seed: null };
+    }
     const usedSeed = seed ?? (0, rng_1.generateRandomSeed)();
-    const rng = (0, rng_1.createSeededRng)(usedSeed);
-    const shuffled = shuffleTiles(createFullTileSet(), rng);
+    return { wall: layoutWall(shuffleTiles(createFullTileSet(), (0, rng_1.createSeededRng)(usedSeed))), seed: usedSeed };
+}
+/** シャッフル済みの80枚を王牌・自摸山に分ける */
+function layoutWall(shuffled) {
     const deadWallSize = 14;
     const rinshanSize = 4;
     const doraStackSize = 5;
@@ -277,14 +285,13 @@ function buildWall(seed) {
     const deadWallDraws = deadWall.slice(0, rinshanSize);
     const doraIndicatorTiles = deadWall.slice(rinshanSize, rinshanSize + doraStackSize);
     const uraDoraIndicatorTiles = deadWall.slice(rinshanSize + doraStackSize);
-    const wall = {
+    return {
         liveWall,
         doraIndicatorTiles,
         revealedDoraIndicators: [],
         uraDoraIndicatorTiles,
         deadWallDraws,
     };
-    return { wall, seed: usedSeed };
 }
 /** 王牌からドラ表示牌を1枚めくる(対局開始時、およびカン成立時に呼ぶ) */
 function revealNextDoraIndicator(wall) {
@@ -2423,7 +2430,7 @@ function determineDealerContinuation(state, tenpaiSeats = []) {
  * 局を終えて次の局(または連荘による同じ局のやり直し、あるいは対局終了)へ進める。
  *
  * @param dealerContinues determineDealerContinuation() の結果
- * @param seed 次の牌山のシャッフルに使うシード値(省略時はランダム)
+ * @param seed 次の牌山のシャッフルに使うシード値、または乱数関数(省略時はランダム。buildWall 参照)
  */
 function advanceRound(state, dealerContinues, seed) {
     const busted = (0, game_1.isBusted)(state);

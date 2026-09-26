@@ -35,8 +35,8 @@ export function shuffleTiles(tiles: Tile[], rng: Rng): Tile[] {
 
 export interface BuiltWall {
   wall: Wall;
-  /** このシャッフルに使ったシード値(検証・再現用に対局記録へ残す) */
-  seed: number;
+  /** このシャッフルに使ったシード値(検証・再現用に対局記録へ残す)。乱数関数を渡した場合は null */
+  seed: number | null;
 }
 
 /**
@@ -52,13 +52,20 @@ export interface BuiltWall {
  *
  * seed を渡すとその値から決定的にシャッフルする(再現・検証用)。
  * 渡さない場合はランダムなシードを都度生成する。
+ * 乱数関数(0以上1未満を返す)を渡すと、それでシャッフルする。オンライン対戦のサーバーは、
+ * 配牌から逆算されないよう暗号用の乱数を渡す(シード値は32ビットしかなく、自分の配牌13枚と
+ * ドラ表示牌から総当たりで牌山全体を割り出せてしまうため)。
  */
-export function buildWall(seed?: number): BuiltWall {
+export function buildWall(seed?: number | Rng): BuiltWall {
+  if (typeof seed === "function") {
+    return { wall: layoutWall(shuffleTiles(createFullTileSet(), seed)), seed: null };
+  }
   const usedSeed = seed ?? generateRandomSeed();
-  const rng = createSeededRng(usedSeed);
+  return { wall: layoutWall(shuffleTiles(createFullTileSet(), createSeededRng(usedSeed))), seed: usedSeed };
+}
 
-  const shuffled = shuffleTiles(createFullTileSet(), rng);
-
+/** シャッフル済みの80枚を王牌・自摸山に分ける */
+function layoutWall(shuffled: Tile[]): Wall {
   const deadWallSize = 14;
   const rinshanSize = 4;
   const doraStackSize = 5;
@@ -70,15 +77,13 @@ export function buildWall(seed?: number): BuiltWall {
   const doraIndicatorTiles = deadWall.slice(rinshanSize, rinshanSize + doraStackSize);
   const uraDoraIndicatorTiles = deadWall.slice(rinshanSize + doraStackSize);
 
-  const wall: Wall = {
+  return {
     liveWall,
     doraIndicatorTiles,
     revealedDoraIndicators: [],
     uraDoraIndicatorTiles,
     deadWallDraws,
   };
-
-  return { wall, seed: usedSeed };
 }
 
 /** 王牌からドラ表示牌を1枚めくる(対局開始時、およびカン成立時に呼ぶ) */

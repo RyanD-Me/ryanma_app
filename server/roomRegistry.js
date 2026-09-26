@@ -252,6 +252,7 @@ class RoomRegistry {
       random: this.random,
       setTimer: this.setTimer,
       clearTimer: this.clearTimer,
+      now: this.now,
       onUpdate: () => this._broadcastGame(code),
       gameId: code,
     });

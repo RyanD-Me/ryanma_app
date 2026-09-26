@@ -1,6 +1,7 @@
 import { GameState, isBusted } from "../types/game";
 import { Seat, createInitialPlayerState } from "../types/player";
 import { buildWall, dealInitialHands, revealNextDoraIndicator } from "../wall/wallGenerator";
+import { Rng } from "../wall/rng";
 import { otherSeat } from "./actions";
 
 const WIND_ORDER: Array<"east" | "south" | "west" | "north"> = ["east", "south", "west", "north"];
@@ -34,9 +35,9 @@ export function determineDealerContinuation(state: GameState, tenpaiSeats: Seat[
  * 局を終えて次の局(または連荘による同じ局のやり直し、あるいは対局終了)へ進める。
  *
  * @param dealerContinues determineDealerContinuation() の結果
- * @param seed 次の牌山のシャッフルに使うシード値(省略時はランダム)
+ * @param seed 次の牌山のシャッフルに使うシード値、または乱数関数(省略時はランダム。buildWall 参照)
  */
-export function advanceRound(state: GameState, dealerContinues: boolean, seed?: number): GameState {
+export function advanceRound(state: GameState, dealerContinues: boolean, seed?: number | Rng): GameState {
   const busted = isBusted(state);
   if (busted) {
     // トビ終了時に場に残っている供託は、トばなかった側(勝者)が受け取る。
