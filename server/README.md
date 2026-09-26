@@ -50,7 +50,7 @@
 |---|---|
 | `FIREBASE_SERVICE_ACCOUNT` | **必須(秘密)**。Firebase のサービスアカウントの鍵(JSON ファイルの中身をそのまま)。リポジトリやチャットには貼らない |
 | `FIREBASE_API_KEY` | 省略可(既定は本番のウェブ API キー。公開してよい値) |
-| `FIREBASE_PROJECT_ID` | 省略可(既定 `ryanma-8be54`。鍵の `project_id` が優先) |
+| `FIREBASE_PROJECT_ID` | 省略可(既定 `ryanma-online`。鍵の `project_id` が優先) |
 | `PUBLIC_URL` | 省略可。ログイン用メールのリンクの戻り先(既定 `https://ryand-me.github.io/ryanma_app/`) |
 
 - `FIREBASE_SERVICE_ACCOUNT` が無いと、動作確認用にメモリ上で動きます(メールは送らず、リンクをログに出す。
