@@ -1294,6 +1294,7 @@ const MahjongLobby = (function () {
     }
     onlineCountWs = ws;
     ws.addEventListener("message", (ev) => {
+      if (onlineCountWs !== ws) return; // 閉じ終わる前の古い接続に届いた人数は使わない
       let msg;
       try {
         msg = JSON.parse(ev.data);
@@ -1308,7 +1309,11 @@ const MahjongLobby = (function () {
       }
     });
     ws.addEventListener("close", () => {
-      if (onlineCountWs === ws) onlineCountWs = null;
+      // 画面の切り替えで自分から閉じた古い接続の close は無視する。回線が遅いと、閉じ終わる前に次の画面が
+      // 新しい接続を張っていることがあり、ここで人数を消したり再接続を予約したりすると、表示が「-」に
+      // なったうえ、8秒後にもう1本接続を張って前の接続が閉じられないまま残ってしまう(自分が2人と数えられる)。
+      if (onlineCountWs !== ws) return;
+      onlineCountWs = null;
       notifyOnlineCount(null);
       scheduleOnlineCountRetry();
     });
@@ -1625,14 +1630,23 @@ const MahjongLobby = (function () {
       wrap.appendChild(row);
       root.appendChild(wrap);
 
-      const unsubscribe = watchOnlineCount((count, byRule) => {
+      const showCounts = (byRule) => {
         for (const k of ["full", "half"]) {
           countEls[k].textContent = `接続数:${byRule ? byRule[k] : "-"}人`;
         }
-      });
+      };
+      const unsubscribe = watchOnlineCount((count, byRule) => showCounts(byRule));
+      // ロビーと同じく、この画面に5分以上とどまったら表示用の接続を切る(通信量削減。ボタンはいつでも押せる)
+      let idleDisconnected = false;
+      const idleTimer = setTimeout(() => {
+        idleDisconnected = true;
+        unsubscribe();
+        showCounts(null);
+      }, LOBBY_IDLE_DISCONNECT_MS);
       new MutationObserver((mutations, observer) => {
         if (!document.body.contains(wrap)) {
-          unsubscribe();
+          clearTimeout(idleTimer);
+          if (!idleDisconnected) unsubscribe();
           observer.disconnect();
         }
       }).observe(document.body, { childList: true, subtree: true });
