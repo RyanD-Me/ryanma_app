@@ -1873,12 +1873,20 @@ const MahjongLobby = (function () {
       const voiceCb = checkbox("発声", "(ポン・カン・リーチ・ロン・ツモ)", sound.voice);
       const bgmCb = checkbox("BGM", "(ロビー・待機画面)", sound.bgm);
       const muteCb = checkbox("消音", "(すべての音を消す)", sound.muted);
-      const volLabel = el("span", { className: "settings-label", textContent: `音量: ${Math.round(sound.volume * 100)}` });
+      // 音量は SE(効果音)・ボイス(発声)・BGM をそれぞれ別に調整する
+      const volLabel = el("span", { className: "settings-label", textContent: `SE音量: ${Math.round(sound.volume * 100)}` });
       const volInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
       volInput.value = String(Math.round(sound.volume * 100));
-      volInput.addEventListener("input", () => (volLabel.textContent = `音量: ${volInput.value}`));
+      volInput.addEventListener("input", () => (volLabel.textContent = `SE音量: ${volInput.value}`));
       soundGroup.appendChild(volLabel);
       soundGroup.appendChild(volInput);
+      const voiceVolume = typeof sound.voiceVolume === "number" ? sound.voiceVolume : sound.volume;
+      const voiceVolLabel = el("span", { className: "settings-label", textContent: `ボイス音量: ${Math.round(voiceVolume * 100)}` });
+      const voiceVolInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
+      voiceVolInput.value = String(Math.round(voiceVolume * 100));
+      voiceVolInput.addEventListener("input", () => (voiceVolLabel.textContent = `ボイス音量: ${voiceVolInput.value}`));
+      soundGroup.appendChild(voiceVolLabel);
+      soundGroup.appendChild(voiceVolInput);
       const bgmVolLabel = el("span", { className: "settings-label", textContent: `BGM音量: ${Math.round(sound.bgmVolume * 100)}` });
       const bgmVolInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
       bgmVolInput.value = String(Math.round(sound.bgmVolume * 100));
@@ -1891,7 +1899,12 @@ const MahjongLobby = (function () {
       soundGroup.appendChild(bgmVolInput);
       const previewBtn = el("button", { type: "button", className: "btn settings-reset-btn", textContent: "試しに鳴らす" });
       previewBtn.addEventListener("click", () =>
-        MahjongSound.preview({ se: seCb.checked, voice: voiceCb.checked, volume: Number(volInput.value) / 100 })
+        MahjongSound.preview({
+          se: seCb.checked,
+          voice: voiceCb.checked,
+          volume: Number(volInput.value) / 100,
+          voiceVolume: Number(voiceVolInput.value) / 100,
+        })
       );
       soundGroup.appendChild(previewBtn);
       fieldsBox.appendChild(soundGroup);
@@ -1911,6 +1924,7 @@ const MahjongLobby = (function () {
           bgmVolume: Number(bgmVolInput.value) / 100,
           muted: muteCb.checked,
           volume: Number(volInput.value) / 100,
+          voiceVolume: Number(voiceVolInput.value) / 100,
         });
         showLobby();
       });

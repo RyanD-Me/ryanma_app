@@ -206,7 +206,8 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 - 音は**状態の差分**で鳴らす(`playSoundsForChanges()`)。操作した場所(自分・CPU・相手・観戦)に関係なく同じ判定で鳴り、
   画面を開いた直後(再接続・観戦開始)は鳴らさない。
 - スマホは「タップ(指を離した時)」の中でしか音を開始できないので、`click`/`touchend` 等のたびに準備を試みる。
-- 設定はオプション画面(効果音/発声/BGM/消音・音量・BGM音量)と対局画面のスピーカーボタン(消音)。localStorage `mahjong_sound_settings`。
+- 設定はオプション画面(効果音/発声/BGM/消音と、SE音量 `volume`・ボイス音量 `voiceVolume`・BGM音量 `bgmVolume` の3つを別々に)と
+  対局画面のスピーカーボタン(消音)。localStorage `mahjong_sound_settings`(`voiceVolume` が無い古い設定は `volume` を引き継ぐ)。
 - 動作確認用に `window.__mahjongSoundLog = []` を入れておくと、鳴らした音の名前が記録される。
 
 ### その他の主な仕様
