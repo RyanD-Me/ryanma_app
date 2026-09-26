@@ -14,7 +14,8 @@
  * - 応答の無くなった接続(スマホの電波切れ等で close が届かないもの)は、WebSocket の
  *   ping/pong で検出して切断扱いにする。
  * - 接続数が変わるたび(誰かがつながった・切れた)、今つながっている全員に
- *   { type: "online-count", count } を送る(ロビー画面等のオンライン人数表示用)。
+ *   { type: "online-count", count, byRule: {full, half} } を送る(ロビー画面等のオンライン人数表示用。
+ *   byRule はルールごとの対局中・相手待ちの人数で、ルームの出入りや相手待ちの出入りでも送り直す)。
  *   まだルームに入っていない接続にも送るため、これだけは protocol.js を通さずここで直接行う。
  *
  * 起動: `node server.js`(PORTは環境変数 PORT、省略時 8080)。
@@ -71,12 +72,26 @@ const RATE_MAX_MESSAGES = 300;
 
 const wss = new WebSocketServer({ server: httpServer, maxPayload: MAX_MESSAGE_BYTES });
 
+// ルールごとの人数が変わったら(ルームの作成・参加・退室、相手待ちの出入り)全員へ知らせる。
+// 続けて何度も変わることがあるので、少しまとめてから送る。
+let countsTimer = null;
+registry.onCountsChanged = () => {
+  if (countsTimer) return;
+  countsTimer = setTimeout(() => {
+    countsTimer = null;
+    broadcastOnlineCount();
+  }, 300);
+};
+
 /** WebSocket レベルの生存確認の間隔(ミリ秒)。この間に pong が返らなければ切断扱いにする。 */
 const HEARTBEAT_INTERVAL_MS = 30000;
 
-/** 今つながっている全員(ルーム未参加でも)に、現在の接続数を送る。 */
+/**
+ * 今つながっている全員(ルーム未参加でも)に、現在の接続数と、ルールごとの対局中・相手待ちの人数
+ * (byRule: {full: 一荘戦, half: 半荘戦}。自動マッチングのルール選択画面の「接続数」)を送る。
+ */
 function broadcastOnlineCount() {
-  const payload = JSON.stringify({ type: "online-count", count: wss.clients.size });
+  const payload = JSON.stringify({ type: "online-count", count: wss.clients.size, byRule: registry.ruleCounts() });
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(payload);
   }

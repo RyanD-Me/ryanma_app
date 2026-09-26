@@ -37,13 +37,14 @@ const MATCH_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 // ---------------- ロビー画面「ルール確認」に表示するルール文面 ----------------
 // あくまで表示用のテキストであり、実際のゲームロジック(役・点数計算等)には一切影響しない。
-const SIMPLE_RULES_TEXT = `・東〜北各2局ずつの計8局
+const SIMPLE_RULES_TEXT = `・東〜北各2局の計8局または東・南各2局の計4局
 ・持ち点45,000点
 ・トビ終了あり(0点は続行、リーチ不可)
 ・チーなし
 ・ツモ和了は点数を4分の3とする
 ・1,000点未満切り上げ
 ・ノーテン罰符5,000点、形式テンパイあり
+・オーラスの親のテンパイ止め・アガリ止めなし
 ・一部役の翻数変更、追加役あり
 　(詳細ルールを参照)`;
 
@@ -55,7 +56,7 @@ const DETAILED_RULES_TEXT = `【使用牌種】
 計20種80枚
 
 【基本ルール】
-・一荘戦(東1局〜北2局 計8局)
+・一荘戦(東〜北各2局の計8局)または半荘戦(東・南各2局の計4局)
 ・親を東家、子を南家とする
 ・持ち点45,000点、45,000点返し
 ・トビ終了あり(0点は続行、リーチ不可)
@@ -144,7 +145,7 @@ const DETAILED_RULES_TEXT = `【使用牌種】
 ・流し役満
 　捨て牌が2〜8の萬子のみかつ相手に捨て牌を鳴かれていない状態で流局すると成立
 　成立者に役満分の点数を支払う
-　祝儀扱いのため、その局は通常の流局と同様に扱う(ノーテン罰符あり、供託はそのまま、親がテンパイしていれば連荘、ノーテンなら親流れ※北2局ならゲーム終了)
+　祝儀扱いのため、その局は通常の流局と同様に扱う(ノーテン罰符あり、供託はそのまま、親がテンパイしていれば連荘、ノーテンなら親流れ※オーラス(一荘戦は北2局、半荘戦は南2局)ならゲーム終了)
 
 【追加役】
 ・大七星(だいちーしん)
@@ -253,9 +254,10 @@ function getOrCreateClientId() {
 class WsRoomController {
   /**
    * @param {{serverUrl: string, name?: string|null, allowSpectate?: boolean, timeControl?: object|null,
-   *          dealerChoice?: string}} opts  allowSpectate・timeControl・dealerChoice はルーム作成時だけ使う
+   *          dealerChoice?: string, gameLength?: string}} opts  allowSpectate・timeControl・dealerChoice はルーム作成時だけ、
+   *          gameLength(一荘戦 "full" / 半荘戦 "half")はルーム作成と自動マッチングで使う
    */
-  constructor({ serverUrl, name, allowSpectate, timeControl, dealerChoice }) {
+  constructor({ serverUrl, name, allowSpectate, timeControl, dealerChoice, gameLength }) {
     this.serverUrl = serverUrl;
     this.myName = name || null;
     /** ルーム作成時に、観戦を許可するか(参加・自動マッチングでは使わない) */
@@ -263,6 +265,8 @@ class WsRoomController {
     /** ルーム作成時の持ち時間・起家の決め方(対局はサーバーがこの設定で進める) */
     this.timeControl = timeControl === undefined ? DEFAULT_TIME_CONTROL : timeControl;
     this.dealerChoice = dealerChoice || "self";
+    /** 対局の長さ(ルーム作成・自動マッチングで送る) */
+    this.gameLength = gameLength === "half" ? "half" : "full";
     /** この対局を観戦している人数(サーバーから通知される) */
     this.spectatorCount = 0;
     /** サーバーに接続中の人数(この接続自身も含む。サーバーから通知される)。未受信は null */
@@ -682,6 +686,7 @@ class WsRoomController {
       allowSpectate: this.allowSpectate,
       timeControl: this.timeControl,
       dealerChoice: this.dealerChoice,
+      gameLength: this.gameLength,
     });
   }
 
@@ -695,7 +700,9 @@ class WsRoomController {
    * (created/joined と同じく)座席が決まった時点で解決する。
    */
   findMatch() {
-    return this._request({ type: "match", protocol: WS_PROTOCOL_VERSION, name: this.myName, clientId: getOrCreateClientId() });
+    return this._request({ type: "match", protocol: WS_PROTOCOL_VERSION, name: this.myName, clientId: getOrCreateClientId(),
+      gameLength: this.gameLength,
+    });
   }
 
   /** 自動マッチングの相手待ちをやめる(サーバーの待ち行列から外れて接続を閉じる) */
@@ -1158,10 +1165,26 @@ const MahjongLobby = (function () {
       /* ignore */
     }
   }
+  const ROOM_GAME_LENGTH_STORAGE_KEY = "mahjong_room_game_length";
+  /** 前回ルーム作成時に選んだ対局の長さ("full" = 一荘戦 | "half" = 半荘戦。既定 "full") */
+  function loadRoomGameLength() {
+    try {
+      return localStorage.getItem(ROOM_GAME_LENGTH_STORAGE_KEY) === "half" ? "half" : "full";
+    } catch (e) {
+      return "full";
+    }
+  }
+  function saveRoomGameLength(v) {
+    try {
+      localStorage.setItem(ROOM_GAME_LENGTH_STORAGE_KEY, v);
+    } catch (e) {
+      /* ignore */
+    }
+  }
   const TEST_PLAY_OPTIONS_STORAGE_KEY = "mahjong_testplay_options";
-  /** 前回のテストプレイの設定 { cpuType, timeControl, dealer }(無ければ既定値) */
+  /** 前回のテストプレイの設定 { cpuType, timeControl, dealer, gameLength }(無ければ既定値) */
   function loadTestPlayOptions() {
-    const def = { cpuType: "weak", timeControl: DEFAULT_TIME_CONTROL, dealer: "self" };
+    const def = { cpuType: "weak", timeControl: DEFAULT_TIME_CONTROL, dealer: "self", gameLength: "full" };
     try {
       const v = JSON.parse(localStorage.getItem(TEST_PLAY_OPTIONS_STORAGE_KEY) || "null");
       if (!v || typeof v !== "object") return def;
@@ -1175,6 +1198,7 @@ const MahjongLobby = (function () {
               : "weak",
         timeControl: tc,
         dealer: ["self", "cpu", "random"].includes(v.dealer) ? v.dealer : "self",
+        gameLength: v.gameLength === "half" ? "half" : "full",
       };
     } catch (e) {
       return def;
@@ -1242,14 +1266,20 @@ const MahjongLobby = (function () {
   // 複雑にしないための分離。
   /** 直近に受け取ったオンライン人数。まだ受け取っていない・切断中は null(=表示しない)。 */
   let onlineCountValue = null;
+  /**
+   * 直近に受け取ったルールごとの対局中・相手待ちの人数 {full, half}(自動マッチングのルール選択画面の
+   * 「接続数」)。まだ受け取っていない・切断中・古いサーバーで送られてこない場合は null。
+   */
+  let ruleCountsValue = null;
   const onlineCountListeners = new Set();
   let onlineCountWs = null;
   let onlineCountRetryTimer = null;
   const ONLINE_COUNT_RETRY_MS = 8000;
 
-  function notifyOnlineCount(value) {
+  function notifyOnlineCount(value, byRule) {
     onlineCountValue = value;
-    for (const cb of onlineCountListeners) cb(value);
+    ruleCountsValue = byRule || null;
+    for (const cb of onlineCountListeners) cb(value, ruleCountsValue);
   }
 
   function connectOnlineCountSocket() {
@@ -1271,7 +1301,10 @@ const MahjongLobby = (function () {
         return;
       }
       if (msg && msg.type === "online-count" && typeof msg.count === "number") {
-        notifyOnlineCount(msg.count);
+        const b = msg.byRule;
+        const byRule =
+          b && typeof b === "object" && Number.isFinite(b.full) && Number.isFinite(b.half) ? { full: b.full, half: b.half } : null;
+        notifyOnlineCount(msg.count, byRule);
       }
     });
     ws.addEventListener("close", () => {
@@ -1295,13 +1328,14 @@ const MahjongLobby = (function () {
 
   /**
    * オンライン人数の表示を購読する。呼んだ直後に(まだ値が無ければ null で)1回、
-   * 以後は値が変わるたびに cb が呼ばれる。表示用の接続がまだ無ければここで張る。
+   * 以後は値が変わるたびに cb(人数, ルールごとの人数 {full, half} | null) が呼ばれる。
+   * 表示用の接続がまだ無ければここで張る。
    * @returns {() => void} 購読解除(このリスナーが最後の1つなら接続も閉じる)
    */
   function watchOnlineCount(cb) {
     onlineCountListeners.add(cb);
     if (!onlineCountWs && !onlineCountRetryTimer) connectOnlineCountSocket();
-    cb(onlineCountValue);
+    cb(onlineCountValue, ruleCountsValue);
     return () => {
       onlineCountListeners.delete(cb);
       if (onlineCountListeners.size > 0) return;
@@ -1427,7 +1461,7 @@ const MahjongLobby = (function () {
         return b;
       };
       // 自動マッチング: 同じサーバーで相手を探している人と自動で組む
-      menuBtn("自動マッチング", () => startOnline("match", loadLastServerUrl(), null, loadLastPlayerName()), true);
+      menuBtn("自動マッチング", showMatchRuleSelect, true);
       // ルーム作成時は、先に持ち時間を決める画面を挟む
       menuBtn("ルームを作成", () => showRoomOptions(loadLastServerUrl(), loadLastPlayerName()));
       // ルームに参加: ルームコードは次の画面で入力する
@@ -1520,22 +1554,88 @@ const MahjongLobby = (function () {
       return { fieldset, read };
     }
 
-    /** ラジオボタンの選択欄(CPUの種類・起家など)。read() は選ばれた value を返す */
+    /**
+     * ラジオボタンの選択欄(CPUの種類・起家など)。read() は選ばれた value を返す。
+     * options の各要素は [value, 表示名, 説明文(省略可。選択肢の下に小さく出す)]
+     */
     function buildRadioField(legendText, options, initialValue) {
       const fieldset = el("fieldset", { className: "room-options-group" });
       fieldset.appendChild(el("legend", { textContent: legendText }));
       const name = "opt-" + Math.random().toString(36).slice(2);
-      const radios = options.map(([value, text]) => {
+      const radios = options.map(([value, text, note]) => {
         const label = el("label", { className: "room-options-choice" });
         const radio = el("input", { type: "radio", name, value });
         if (value === initialValue) radio.checked = true;
         label.appendChild(radio);
         label.appendChild(document.createTextNode(" " + text));
+        if (note) label.appendChild(el("span", { className: "room-options-note", textContent: note }));
         fieldset.appendChild(label);
         return radio;
       });
       if (!radios.some((r) => r.checked)) radios[0].checked = true;
       return { fieldset, read: () => (radios.find((r) => r.checked) || radios[0]).value };
+    }
+
+    /** 一荘戦・半荘戦の説明文(自動マッチングのルール選択・ルーム作成・CPU対戦の設定で共通) */
+    const GAME_LENGTH_NOTES = { full: "東〜北2局ずつの計8局", half: "東・南2局ずつの計4局" };
+
+    /** 対局の長さ(一荘戦/半荘戦)の選択欄 */
+    function buildGameLengthField(initialValue) {
+      return buildRadioField(
+        "対局",
+        [
+          ["full", "一荘戦", GAME_LENGTH_NOTES.full],
+          ["half", "半荘戦", GAME_LENGTH_NOTES.half],
+        ],
+        initialValue
+      );
+    }
+
+    /**
+     * 自動マッチングのルール選択画面。一荘戦・半荘戦のボタンの下に、説明文と、今そのルールで
+     * 対局中・相手待ちの人数(「接続数:n人」。サーバーの online-count の byRule)を出す。
+     * 同じルールを選んだ人とだけ組まれる。
+     */
+    function showMatchRuleSelect() {
+      root.innerHTML = "";
+      const wrap = el("div", { className: "lobby room-options options-screen match-rule-screen" });
+      wrap.appendChild(el("h2", { className: "room-options-title", textContent: "自動マッチング" }));
+      const fieldsBox = el("div", { className: "options-fields" });
+      const countEls = {};
+      for (const [value, text] of [
+        ["full", "一荘戦"],
+        ["half", "半荘戦"],
+      ]) {
+        const group = el("div", { className: "room-options-group match-rule-group" });
+        const btn = el("button", { type: "button", className: "btn btn-primary match-rule-btn", textContent: text });
+        btn.addEventListener("click", () =>
+          startOnline("match", loadLastServerUrl(), null, loadLastPlayerName(), undefined, { gameLength: value })
+        );
+        group.appendChild(btn);
+        group.appendChild(el("p", { className: "match-rule-note", textContent: GAME_LENGTH_NOTES[value] }));
+        countEls[value] = el("p", { className: "online-count match-rule-count", textContent: "接続数:-人" });
+        group.appendChild(countEls[value]);
+        fieldsBox.appendChild(group);
+      }
+      wrap.appendChild(fieldsBox);
+      const row = el("div", { className: "lobby-join-row" });
+      const backBtn = el("button", { type: "button", className: "btn", textContent: "戻る" });
+      backBtn.addEventListener("click", showLobby);
+      row.appendChild(backBtn);
+      wrap.appendChild(row);
+      root.appendChild(wrap);
+
+      const unsubscribe = watchOnlineCount((count, byRule) => {
+        for (const k of ["full", "half"]) {
+          countEls[k].textContent = `接続数:${byRule ? byRule[k] : "-"}人`;
+        }
+      });
+      new MutationObserver((mutations, observer) => {
+        if (!document.body.contains(wrap)) {
+          unsubscribe();
+          observer.disconnect();
+        }
+      }).observe(document.body, { childList: true, subtree: true });
     }
 
     /** 設定画面の共通の枠(タイトル・エラー表示・決定/戻るボタン) */
@@ -1565,7 +1665,7 @@ const MahjongLobby = (function () {
     }
 
     /**
-     * ルーム作成前のオプション画面。持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
+     * ルーム作成前のオプション画面。対局の長さ(一荘戦/半荘戦)・持ち時間(打牌ごと+局ごと)・観戦の許可・起家を決める。
      * 決めた設定はルーム作成者(ホスト)から対局データと一緒に相手へ配られる。
      */
     function showRoomOptions(serverUrl, name) {
@@ -1587,7 +1687,8 @@ const MahjongLobby = (function () {
         ],
         loadRoomDealer()
       );
-      showOptionsScreen("ルームの設定", [time, spectate, dealer], "ルームを作成する", () => {
+      const length = buildGameLengthField(loadRoomGameLength());
+      showOptionsScreen("ルームの設定", [length, time, spectate, dealer], "ルームを作成する", () => {
         const r = time.read();
         if (r.error) return r.error;
         saveLastTimeControl(r.value);
@@ -1595,12 +1696,14 @@ const MahjongLobby = (function () {
         saveAllowSpectate(allowSpectate);
         const dealerChoice = dealer.read();
         saveRoomDealer(dealerChoice);
-        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice });
+        const gameLength = length.read();
+        saveRoomGameLength(gameLength);
+        startOnline("create", serverUrl, null, name, r.value, { allowSpectate, dealerChoice, gameLength });
         return null;
       });
     }
 
-    /** テストプレイ(CPU戦)の開始前のオプション画面。CPUの種類・持ち時間・起家を決める。 */
+    /** テストプレイ(CPU戦)の開始前のオプション画面。対局の長さ・CPUの種類・持ち時間・起家を決める。 */
     function showTestPlayOptions() {
       const last = loadTestPlayOptions();
       const cpu = buildRadioField(
@@ -1624,10 +1727,11 @@ const MahjongLobby = (function () {
         ],
         last.dealer
       );
-      showOptionsScreen("CPU対戦の設定", [cpu, time, dealer], "開始する", () => {
+      const length = buildGameLengthField(last.gameLength);
+      showOptionsScreen("CPU対戦の設定", [length, cpu, time, dealer], "開始する", () => {
         const t = time.read();
         if (t.error) return t.error;
-        const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read() };
+        const opts = { cpuType: cpu.read(), timeControl: t.value, dealer: dealer.read(), gameLength: length.read() };
         saveTestPlayOptions(opts);
         const selfIsDealer = opts.dealer === "self" || (opts.dealer === "random" && Math.random() < 0.5);
         root.innerHTML = "";
@@ -1636,6 +1740,7 @@ const MahjongLobby = (function () {
           onExit: showLobby,
           cpuType: opts.cpuType,
           timeControl: opts.timeControl,
+          gameLength: opts.gameLength,
           humanSeat: selfIsDealer ? "east" : "south",
         });
         return null;
@@ -2125,6 +2230,7 @@ const MahjongLobby = (function () {
         allowSpectate: roomOptions.allowSpectate,
         timeControl,
         dealerChoice: roomOptions.dealerChoice,
+        gameLength: roomOptions.gameLength,
       });
       // 自動マッチングの相手待ちが長時間(既定5分)続いた場合に諦めてロビーへ戻るためのタイマー。
       // 相手が見つかった・キャンセルした・接続が切れた、いずれの場合も必ずクリアすること
@@ -2134,7 +2240,7 @@ const MahjongLobby = (function () {
       try {
         let result;
         if (mode === "match") {
-          // 相手が見つかるまでの待機画面(キャンセル可)
+          // 相手が見つかるまでの待機画面(ルール選択・ロビーに戻れる)
           controller.onMatchWaiting = () => {
             root.innerHTML = "";
             const wrap = el("div", { className: "lobby-waiting" });
@@ -2143,13 +2249,27 @@ const MahjongLobby = (function () {
             const hint = el("p", { className: "lobby-peer-status", textContent: "相手が見つかると自動的に対局が始まります。" });
             wrap.appendChild(hint);
             wrap.appendChild(buildOnlineCountRow((cb) => controller.watchOnlineCount(cb)));
-            const cancelBtn = el("button", { type: "button", className: "btn", textContent: "キャンセル" });
-            cancelBtn.addEventListener("click", () => {
-              clearTimeout(matchWaitTimer);
-              controller.cancelMatch();
-              showLobby();
-            });
-            wrap.appendChild(cancelBtn);
+            wrap.appendChild(
+              el("p", {
+                className: "lobby-peer-status",
+                textContent: `ルール: ${roomOptions.gameLength === "half" ? "半荘戦" : "一荘戦"}(${GAME_LENGTH_NOTES[roomOptions.gameLength === "half" ? "half" : "full"]})`,
+              })
+            );
+            const btnRow = el("div", { className: "lobby-join-row" });
+            for (const [text, next] of [
+              ["ルール選択に戻る", showMatchRuleSelect],
+              ["ロビーに戻る", showLobby],
+            ]) {
+              const b = el("button", { type: "button", className: "btn", textContent: text });
+              b.dataset.sound = "cancel"; // 戻るボタンと同じ音
+              b.addEventListener("click", () => {
+                clearTimeout(matchWaitTimer);
+                controller.cancelMatch();
+                next();
+              });
+              btnRow.appendChild(b);
+            }
+            wrap.appendChild(btnRow);
             root.appendChild(wrap);
 
             clearTimeout(matchWaitTimer);
@@ -2177,6 +2297,7 @@ const MahjongLobby = (function () {
           timeControl: timeControl !== undefined ? timeControl : DEFAULT_TIME_CONTROL,
           // ルーム作成時に選んだ起家の決め方(ホストだけが使う。自動マッチングはホストが起家)
           dealerChoice: roomOptions.dealerChoice,
+          gameLength: roomOptions.gameLength,
         });
       } catch (err) {
         clearTimeout(matchWaitTimer);

@@ -597,3 +597,46 @@ test("観戦: 両者とも切断中の対局は一覧に出さない", () => {
   handleClientMessage(registry, viewer, { type: "list-games" });
   assert.equal(viewer.received.at(-1).list.length, 0);
 });
+
+// ---------------- 一荘戦 / 半荘戦 ----------------
+
+test("match: 一荘戦と半荘戦の相手待ちは組まれず、同じルールの人とだけ組む(半荘戦は全4局)", () => {
+  const registry = new RoomRegistry();
+  const [a, b, c] = ["a", "b", "c"].map(fakeConn);
+  let changes = 0;
+  registry.onCountsChanged = () => changes++;
+  handleClientMessage(registry, a, { type: "match", gameLength: "full" });
+  handleClientMessage(registry, b, { type: "match", gameLength: "half" });
+  assert.equal(a.received.at(-1).type, "match-waiting");
+  assert.equal(b.received.at(-1).type, "match-waiting");
+  assert.deepEqual(registry.ruleCounts(), { full: 1, half: 1 });
+  assert.ok(changes >= 2);
+  handleClientMessage(registry, c, { type: "match", gameLength: "half" });
+  const code = b.received.find((m) => m.type === "matched").code;
+  assert.equal(c.received.find((m) => m.type === "matched").code, code);
+  assert.equal(a.received.find((m) => m.type === "matched"), undefined);
+  const session = registry.rooms.get(code).session;
+  assert.equal(session.state.totalRounds, 4);
+  assert.equal(b.received.at(-1).payload.gameLength, "half");
+  assert.deepEqual(registry.ruleCounts(), { full: 1, half: 2 });
+  // 相手待ちをやめると数から外れる
+  handleClientMessage(registry, a, { type: "cancel-match" });
+  assert.deepEqual(registry.ruleCounts(), { full: 0, half: 2 });
+  registry.leaveRoom(b);
+  registry.leaveRoom(c);
+  assert.deepEqual(registry.ruleCounts(), { full: 0, half: 0 });
+});
+
+test("create: gameLength を省略すると一荘戦(全8局)、half なら半荘戦(全4局)", () => {
+  const registry = new RoomRegistry();
+  const [h1, g1, h2, g2] = ["h1", "g1", "h2", "g2"].map(fakeConn);
+  handleClientMessage(registry, h1, { type: "create" });
+  handleClientMessage(registry, h2, { type: "create", gameLength: "half" });
+  const c1 = h1.received.find((m) => m.type === "created").code;
+  const c2 = h2.received.find((m) => m.type === "created").code;
+  handleClientMessage(registry, g1, { type: "join", code: c1 });
+  handleClientMessage(registry, g2, { type: "join", code: c2 });
+  assert.equal(registry.rooms.get(c1).session.state.totalRounds, 8);
+  assert.equal(registry.rooms.get(c2).session.state.totalRounds, 4);
+  assert.deepEqual(registry.ruleCounts(), { full: 2, half: 2 });
+});

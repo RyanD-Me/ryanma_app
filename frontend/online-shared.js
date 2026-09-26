@@ -35,11 +35,11 @@ class OnlineMahjongApp extends MahjongApp {
   /**
    * @param {HTMLElement} root
    * @param {{roomController: object, mySeat: "east"|"south", onExit?: Function,
-   *   dealerChoice?: "self"|"opponent"|"random"}} opts
-   *   timeControl・dealerChoice はルーム作成時の設定(待機画面の表示用。実際の値はサーバーから届く)
+   *   dealerChoice?: "self"|"opponent"|"random", gameLength?: "full"|"half"}} opts
+   *   timeControl・dealerChoice・gameLength はルーム作成時の設定(待機画面の表示用。実際の値はサーバーから届く)
    */
-  constructor(root, { roomController, mySeat, onExit, timeControl, isMatch, dealerChoice }) {
-    super(root, { autoStart: false, onExit, timeControl });
+  constructor(root, { roomController, mySeat, onExit, timeControl, isMatch, dealerChoice, gameLength }) {
+    super(root, { autoStart: false, onExit, timeControl, gameLength });
     this.roomController = roomController;
     this.mySeat = mySeat;
     this.dealerChoice = ["self", "opponent", "random"].includes(dealerChoice) ? dealerChoice : "self";
@@ -310,6 +310,7 @@ class OnlineMahjongApp extends MahjongApp {
       // 持ち時間・起家の決め方はサーバーが持つ設定に合わせる
       if (g.timeControl !== undefined) this.timeControl = g.timeControl;
       if (g.dealerChoice !== undefined) this.dealerChoice = g.dealerChoice;
+      if (g.gameLength === "full" || g.gameLength === "half") this.gameLength = g.gameLength;
       // 結果画面の間、同じ流局結果が何度も届いても再表示タイマーをやり直さないよう、
       // lastWin と同様に内容が変わった時だけ反映する。
       const incomingExhaustive = g.lastExhaustiveOutcome || null;
@@ -379,10 +380,27 @@ class OnlineMahjongApp extends MahjongApp {
 
   render() {
     super.render();
+    this._autoPassIfNoCall();
     this._renderSpectatorBadge();
     this._renderConnectionOverlay();
     // 退室の確認ダイアログは接続状態の表示より前面に出す
     this.appendExitConfirm();
+  }
+
+  /**
+   * 「鳴き無し」がオンで、相手の捨て牌をポン・カンできる(ロンはできない)場合は、自動でスルーを送る。
+   * オンライン対戦では見送りもサーバーが進めるため、送らないとサーバーが自分の判断を待ったまま止まってしまう
+   * (ロンできる場合は、鳴き無しでもロンの選択肢を残す)。
+   */
+  _autoPassIfNoCall() {
+    const s = this.state;
+    if (!s || !this.noCall || s.phase !== "call_window" || !s.lastDiscard) return;
+    const seat = OnlineEngine.otherSeat(s.lastDiscard.from);
+    if (!this.canAct("callWindow", seat)) return;
+    const raw = this.rawCallOptions(seat, s.lastDiscard.tile);
+    // サーバーが自分の判断を待っているのは、実際に鳴ける時だけ(鳴けない牌での待ちは送らなくても進む)
+    if (raw.canRon || (!raw.canPon && !raw.canMinkan)) return;
+    this._sendAction({ type: "pass" });
   }
 
   /** 観戦者がいれば、卓の左上に「観戦 n人」と小さく表示する */
@@ -500,6 +518,10 @@ class OnlineMahjongApp extends MahjongApp {
         dc.className = "lobby-peer-status";
         dc.textContent = `起家: ${{ self: "自分", opponent: "相手", random: "ランダム" }[this.dealerChoice]}`;
         wrap.appendChild(dc);
+        const gl = document.createElement("p");
+        gl.className = "lobby-peer-status";
+        gl.textContent = `対局: ${this.gameLength === "half" ? "半荘戦(東・南2局ずつの計4局)" : "一荘戦(東〜北2局ずつの計8局)"}`;
+        wrap.appendChild(gl);
       }
     } else {
       const hint = document.createElement("p");

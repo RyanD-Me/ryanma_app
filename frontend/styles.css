@@ -1809,3 +1809,32 @@ h1, .round-badge, .log-title {
 @media (min-width: 900px) and (min-height: 481px) {
   .app-shell:has(.table:not(.table-landscape)) { max-width: 1100px; }
 }
+
+/* 自分の手牌とツモ牌は、牌の厚み(色帯)を上側に付ける(手前から立てた牌を見ている見た目)。
+   鳴いた面子(.melds)はこれまでどおり下側。縦向き・横向き・PC 共通。 */
+.hand-row:not(.hand-row-opponent) .hand-and-draw .tile:not(.tile-back) {
+  box-shadow: 0 -3px 0 var(--tile-face-shadow);
+}
+.hand-row:not(.hand-row-opponent) .hand-and-draw .tile.tile-back {
+  box-shadow: 0 -3px 0 #c98f27;
+}
+
+/* ---------------- 一荘戦・半荘戦 ----------------
+   設定画面の選択肢の説明文(「東〜北2局ずつの計8局」など)は選択肢の下に小さく出す。
+   自動マッチングのルール選択画面は、ルールごとにボタン・説明文・接続数を縦に並べる。 */
+.room-options-choice > .room-options-note {
+  flex-basis: 100%;
+  padding-left: 22px;
+  font-size: 0.75rem;
+  opacity: 0.8;
+  white-space: normal;
+}
+.match-rule-group { align-items: center; text-align: center; gap: 6px; }
+.match-rule-btn { min-width: 10em; font-size: 1.05rem; }
+.match-rule-note { margin: 0; font-size: 0.85rem; opacity: 0.85; }
+.match-rule-group .match-rule-count { margin: 0; }
+@media (max-height: 480px) and (orientation: landscape) {
+  .options-screen .room-options-choice:has(.room-options-note) { flex-wrap: wrap; }
+  .options-screen .room-options-note { font-size: 0.68rem; padding-left: 20px; }
+  .match-rule-screen .match-rule-group { justify-content: center; padding: 14px 12px; }
+}
