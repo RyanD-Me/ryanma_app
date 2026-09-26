@@ -1002,13 +1002,6 @@ h1, .round-badge, .log-title {
   flex-direction: column;
   gap: 8px;
 }
-.lobby-server-url-input {
-  width: 100%;
-  text-transform: none;
-  letter-spacing: normal;
-  font-family: monospace;
-  font-size: 0.85rem;
-}
 .lobby-name-input {
   width: 100%;
   text-transform: none;
@@ -1540,7 +1533,6 @@ h1, .round-badge, .log-title {
 .lobby-current { display: flex; flex-direction: column; gap: 4px; text-align: center; }
 .lobby-current p { margin: 0; }
 .lobby-current-name { font-size: 0.9rem; }
-.lobby-current-server { font-size: 0.7rem; opacity: 0.65; word-break: break-all; }
 /* オンライン人数(ロビー・自動マッチングの待機画面)。値が届くまで・切断中は「-」を薄く表示する。 */
 .online-count { font-size: 0.75rem; opacity: 0.75; margin-top: 2px; }
 .online-count-value { color: var(--gold); font-weight: 600; }

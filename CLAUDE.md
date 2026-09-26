@@ -52,8 +52,8 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 ```
 
 - `index.html` は約 4.9MB(効果音・BGM を埋め込んでいるため)。
-- ローカルでオンライン対戦を試すときは、オプション画面のサーバーURLを `ws://localhost:8080` にする
-  (localStorage `mahjong_ws_server_url`)。
+- ローカルでオンライン対戦を試すときは、localStorage `mahjong_ws_server_url` に `ws://localhost:8080` を入れる
+  (画面からサーバーURLは変えられない。`ws://localhost` / `ws://127.0.0.1` 以外の値は無視して既定のサーバーにつなぐ)。
 
 ## 4. ゲームのルール(決定事項)
 
@@ -98,8 +98,9 @@ npm run server       # 中継サーバーをローカルで起動(既定 8080。
 
 ### ロビー・設定(`ws.js` の `MahjongLobby.mount`)
 - ロビー: [前回の対局に戻る] 自動マッチング / ルームを作成 / ルームに参加 / 観戦 / CPU対戦 / 牌譜 / オプション / ルール確認、
-  下(横向きは右)にプレイヤー名・サーバー・オンライン人数。
-- 既定サーバー `wss://ryanma.onrender.com`(`DEFAULT_SERVER_URL`)。
+  下(横向きは右)にプレイヤー名・オンライン人数。
+- サーバーは `wss://ryanma.onrender.com`(`DEFAULT_SERVER_URL`)固定。オプション画面のサーバーURLの入力欄とロビーのサーバー表示は
+  2026-09-26 に削除した(`loadLastServerUrl()` は動作確認用の localhost だけ localStorage の値を使う)。
 - CPU対戦の設定(対局・持ち時間・CPUの型・起家)、ルーム作成の設定(対局・持ち時間・観戦の許可・起家)は共通部品 `showOptionsScreen`。
   「対局」は一荘戦/半荘戦の選択(`buildGameLengthField`、説明文は `GAME_LENGTH_NOTES`)。スマホ横向きでは説明文を出さず、
   対局の下に起家を重ねて1列にする(`buildLengthDealerColumn` の `.options-col`。縦向き・PC は `display: contents` で対局→起家→持ち時間…の順)。ルーム作成の選択は localStorage
