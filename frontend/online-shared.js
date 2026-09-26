@@ -286,6 +286,8 @@ class OnlineMahjongApp extends MahjongApp {
     const version = Number.isInteger(g.version) ? g.version : this._version + 1;
     if (version < this._version) return;
     this._version = version;
+    // 観戦: 対局者がまだ打っている局の局面は、サーバーが両者の手牌を伏せて送ってくる
+    this.spectatorHandsHidden = g.spectatorHandsHidden === true;
     this._awaitingVersion = null;
     const oldState = this.state;
     const newState = g.state;
@@ -639,6 +641,18 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
   render() {
     super.render();
     this._enableViewSwitch();
+    this._renderHiddenHandsNotice();
+  }
+
+  /** 進行中の局のため手牌を伏せているとき(サーバーが spectatorHandsHidden を付けて送ってくる)は、その理由を表示する */
+  _renderHiddenHandsNotice() {
+    if (!this.state || !this.spectatorHandsHidden) return;
+    const phase = this.state.phase;
+    if (phase === "round_end" || phase === "game_end") return;
+    const notice = document.createElement("div");
+    notice.className = "spectator-hidden-notice";
+    notice.textContent = "現在進行中の局のため、不正防止として対局者が次の局に進むまで手牌は公開されません。";
+    this.root.appendChild(notice);
   }
 
   /**

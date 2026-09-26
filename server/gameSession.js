@@ -120,6 +120,8 @@ class GameSession {
     /** 見送りの前にわざと入れている待ち {key, done}(key はどの捨て牌に対してか) */
     this._passDelay = null;
     this.destroyed = false;
+    /** 何回目の対局か(再戦で増える)。観戦者向けに「どの対局のどの局か」を見分けるため */
+    this.gameNumber = 0;
   }
 
   // ---------------- 対局の開始・局の進行 ----------------
@@ -132,6 +134,7 @@ class GameSession {
 
   /** 新しい対局(最初の対局・再戦)を始める */
   start() {
+    this.gameNumber += 1;
     const dealer = this.chooseStartingDealer();
     const { wall } = E.buildWall(this.secureRandom);
     const revealed = E.revealNextDoraIndicator(wall);
@@ -616,6 +619,17 @@ class GameSession {
     };
   }
 
+  /** 今の局を表すキー(再戦しても前の対局の局と区別できる) */
+  roundKey() {
+    return this.state ? `${this.gameNumber}:${this.state.roundSerial || 0}` : null;
+  }
+
+  /** 局の途中(対局者がまだ打っている)か。結果画面では両者の手牌が公開されるので途中ではない */
+  isRoundInPlay() {
+    const s = this.state;
+    return !!s && !this.destroyed && s.phase !== "round_end" && s.phase !== "game_end";
+  }
+
   /** 観戦一覧用の要約 */
   summary() {
     const s = this.state;
@@ -634,6 +648,27 @@ class GameSession {
   }
 }
 
+/**
+ * 観戦者向けの対局データの、両者の手牌(ツモ牌を含む)を伏せ牌にしたもの。観戦は3分遅れだが、局が3分より長く
+ * 続くと「同じ局の3分前の手牌」が見えてしまい、対局者が別の端末で自分の対局を観戦すれば相手の手牌が分かる。
+ * そのため、対局者がまだ同じ局を打っている間に配る局面では手牌を伏せる(spectatorHandsHidden: true)。
+ */
+function hideHandsForSpectators(view) {
+  if (!view || !view.state) return view;
+  const s = view.state;
+  const players = {};
+  for (const p of SEATS) {
+    const pl = s.players[p];
+    players[p] = Object.assign({}, pl, {
+      hand: pl.hand.map((_, i) => ({ id: `h${i}`, kind: null, isRedDora: false })),
+      drawnTile: pl.drawnTile ? { id: "hd", kind: null, isRedDora: false } : null,
+      isTemporaryFuriten: false,
+      isRiichiMissedFuriten: false,
+    });
+  }
+  return Object.assign({}, view, { state: Object.assign({}, s, { players }), spectatorHandsHidden: true });
+}
+
 /** クライアントから届いた牌の種類を検査してキーにする(不正なら null) */
 function safeKindKey(kind) {
   try {
@@ -647,6 +682,7 @@ function safeKindKey(kind) {
 
 module.exports = {
   GameSession,
+  hideHandsForSpectators,
   secureRandom,
   normalizeTimeControl,
   DEAL_ANIMATION_MS,

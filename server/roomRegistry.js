@@ -31,7 +31,7 @@
  */
 
 const crypto = require("crypto");
-const { GameSession, secureRandom } = require("./gameSession");
+const { GameSession, secureRandom, hideHandsForSpectators } = require("./gameSession");
 
 // 紛らわしい文字 (0/O, 1/I/L) を除いた英数字。声に出して伝えても書き取りやすいように。
 const ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -317,7 +317,7 @@ class RoomRegistry {
   /** 観戦者向けの対局データを、SPECTATOR_DELAY_MS 後に配るよう予約する(観戦者がいなくても、途中から来た人のために貯める) */
   _queueSpectatorView(room) {
     if (!room.allowSpectate) return;
-    const entry = { at: this.now(), view: room.session.viewFor(null) };
+    const entry = { at: this.now(), view: room.session.viewFor(null), roundKey: room.session.roundKey() };
     room.spectatorFeed.push(entry);
     if (this.spectatorDelayMs <= 0) {
       this._releaseSpectatorView(room, entry);
@@ -326,13 +326,19 @@ class RoomRegistry {
     this.setTimer(() => this._releaseSpectatorView(room, entry), this.spectatorDelayMs);
   }
 
-  /** 遅らせていた対局データを観戦者に配る */
+  /**
+   * 遅らせていた対局データを観戦者に配る。対局者がまだその局を打っている(局が3分より長く続いている)
+   * 場合は、両者の手牌を伏せて配る(対局者が別の端末で自分の対局を観戦して、相手の手牌を知れないように)。
+   */
   _releaseSpectatorView(room, entry) {
     const i = room.spectatorFeed.indexOf(entry);
     if (i < 0) return;
     room.spectatorFeed.splice(0, i + 1);
-    room.delayedView = entry.view;
-    for (const sp of room.spectators) safeSend(sp, { type: "game", payload: entry.view });
+    const session = room.session;
+    const stillPlaying = !!session && session.isRoundInPlay() && session.roundKey() === entry.roundKey;
+    const view = stillPlaying ? hideHandsForSpectators(entry.view) : entry.view;
+    room.delayedView = view;
+    for (const sp of room.spectators) safeSend(sp, { type: "game", payload: view });
   }
 
   /** 観戦者に最初の対局データが届くまでの残り時間(ミリ秒)。既に届いていれば 0 */

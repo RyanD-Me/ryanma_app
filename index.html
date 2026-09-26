@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-gDtK/4JMAgVX/mdvGHNM3nN2yMr2a9p35jCUVT0GJpM=' 'sha256-JDI7gIXtxfAuqaxrzcNJFQJ4RHSxoasw3eb2xIl21sU=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-G/HD188u4j2S+QxgrpSi3uF/Jhw/J49P7d4s96AfAqQ=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-gDtK/4JMAgVX/mdvGHNM3nN2yMr2a9p35jCUVT0GJpM=' 'sha256-HJQn2LEeYpYq0kN6HZzAbtZ6gPNzGge/stwuqf9YVHw=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-G/HD188u4j2S+QxgrpSi3uF/Jhw/J49P7d4s96AfAqQ=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1873,6 +1873,34 @@ h1, .round-badge, .log-title {
   .options-screen .options-col { display: flex; flex-direction: column; gap: 8px; flex: 0.75 1 0; min-width: 0; }
   .options-screen .options-col > .room-options-group { flex: 1 1 auto; }
   .match-rule-screen .match-rule-group { justify-content: center; padding: 14px 12px; }
+}
+
+/* 観戦: 進行中の局のため手牌を伏せているときの説明(卓の上側、相手の手牌の辺りに重ねる。手牌は伏せてあるので隠れても困らない) */
+.spectator-hidden-notice {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 14;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgba(20, 30, 26, 0.9);
+  border: 1px solid var(--panel-border);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+}
+/* スマホ縦向き: 左上の「観戦中」の表示の下、伏せてある相手の手牌の行にちょうど重なるよう小さめにする(捨て牌は隠さない) */
+@media (max-width: 899px) and (not ((max-height: 480px) and (orientation: landscape))) {
+  .spectator-hidden-notice { top: 33px; font-size: 0.68rem; line-height: 1.4; padding: 3px 10px; }
+}
+@media (max-height: 480px) and (orientation: landscape) {
+  /* 左の点数欄・右のボタン類と重ならないよう、真ん中の幅に収める(収まらなければ2行) */
+  .spectator-hidden-notice { top: 4px; max-width: calc(100% - 300px); font-size: 0.68rem; line-height: 1.35; padding: 3px 10px; }
 }
 
 </style>
@@ -9738,6 +9766,8 @@ class OnlineMahjongApp extends MahjongApp {
     const version = Number.isInteger(g.version) ? g.version : this._version + 1;
     if (version < this._version) return;
     this._version = version;
+    // 観戦: 対局者がまだ打っている局の局面は、サーバーが両者の手牌を伏せて送ってくる
+    this.spectatorHandsHidden = g.spectatorHandsHidden === true;
     this._awaitingVersion = null;
     const oldState = this.state;
     const newState = g.state;
@@ -10091,6 +10121,18 @@ class SpectatorMahjongApp extends OnlineMahjongApp {
   render() {
     super.render();
     this._enableViewSwitch();
+    this._renderHiddenHandsNotice();
+  }
+
+  /** 進行中の局のため手牌を伏せているとき(サーバーが spectatorHandsHidden を付けて送ってくる)は、その理由を表示する */
+  _renderHiddenHandsNotice() {
+    if (!this.state || !this.spectatorHandsHidden) return;
+    const phase = this.state.phase;
+    if (phase === "round_end" || phase === "game_end") return;
+    const notice = document.createElement("div");
+    notice.className = "spectator-hidden-notice";
+    notice.textContent = "現在進行中の局のため、不正防止として対局者が次の局に進むまで手牌は公開されません。";
+    this.root.appendChild(notice);
   }
 
   /**
