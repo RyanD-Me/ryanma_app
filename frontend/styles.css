@@ -1833,9 +1833,8 @@ h1, .round-badge, .log-title {
 .match-rule-btn { min-width: 10em; font-size: 1.05rem; }
 .match-rule-note { margin: 0; font-size: 0.85rem; opacity: 0.85; }
 .match-rule-group .match-rule-count { margin: 0; }
-/* 対局と起家の列: 縦向き・PC では列を作らず、起家の欄を最後に並べる */
+/* 対局と起家の列: 縦向き・PC では列を作らず、対局・起家の順にそのまま縦に並べる */
 .options-col { display: contents; }
-.options-col > .room-options-dealer { order: 1; }
 @media (max-height: 480px) and (orientation: landscape) {
   /* 横向きは説明文を出さず、対局の下に起家を重ねて1列にし、ほかの欄(持ち時間・観戦・CPU)の幅を確保する */
   .options-screen .room-options-note { display: none; }

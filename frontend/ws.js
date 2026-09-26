@@ -1641,7 +1641,7 @@ const MahjongLobby = (function () {
     /**
      * 対局(一荘戦/半荘戦)と起家の欄を1つの列にまとめる。スマホ横向きでは2つを縦に重ねて1列にし、
      * 持ち時間などの欄の幅を確保する。縦向き・PC では列を無いものとして扱い(display: contents)、
-     * 起家の欄を最後に並べる(styles.css の「一荘戦・半荘戦」)。showOptionsScreen の fields に渡せる形で返す。
+     * 対局・起家の順にほかの欄と同じく縦に並ぶ(styles.css の「一荘戦・半荘戦」)。showOptionsScreen の fields に渡せる形で返す。
      */
     function buildLengthDealerColumn(length, dealer) {
       const col = el("div", { className: "options-col" });
