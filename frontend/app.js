@@ -276,11 +276,17 @@ function tenbouSoundLevel(scoreResult) {
 
 const MahjongSound = (() => {
   const STORAGE_KEY = "mahjong_sound_settings";
-  const DEFAULTS = { se: true, voice: true, volume: 0.8, muted: false, bgm: true, bgmVolume: 0.5 };
+  // volume: SE(効果音)の音量、voiceVolume: ボイス(発声)の音量、bgmVolume: BGMの音量(それぞれ別に調整する)
+  const DEFAULTS = { se: true, voice: true, volume: 0.8, voiceVolume: 0.8, muted: false, bgm: true, bgmVolume: 0.5 };
   let settings = Object.assign({}, DEFAULTS);
   try {
     const raw = typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY);
-    if (raw) settings = Object.assign(settings, JSON.parse(raw));
+    if (raw) {
+      const saved = JSON.parse(raw);
+      settings = Object.assign(settings, saved);
+      // ボイス音量が無い古い設定では、それまで共通だった音量をボイスにも使う
+      if (saved && typeof saved.voiceVolume !== "number" && typeof saved.volume === "number") settings.voiceVolume = saved.volume;
+    }
   } catch (e) {
     /* ignore */
   }
@@ -566,8 +572,9 @@ const MahjongSound = (() => {
   }
 
   function playVoice(word, cfg) {
-    if (cfg.muted || !cfg.voice || cfg.volume <= 0) return;
-    if (!playSample(word, cfg.volume)) speakText(word, cfg.volume);
+    const vol = typeof cfg.voiceVolume === "number" ? cfg.voiceVolume : cfg.volume;
+    if (cfg.muted || !cfg.voice || vol <= 0) return;
+    if (!playSample(word, vol)) speakText(word, vol);
   }
 
   /** 効果音(打牌音以外)を鳴らす。delayMs 後に鳴らす(同時に鳴る音と重ならないよう少しずらす) */

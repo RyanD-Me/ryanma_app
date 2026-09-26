@@ -1732,7 +1732,7 @@ h1, .round-badge, .log-title {
   .settings-screen .options-fields > .room-options-group { flex: 1 1 0; }
   .settings-screen .settings-field { gap: 4px; }
   .settings-screen .lobby-code-input { padding: 6px 10px; font-size: 0.9rem; }
-  /* 音の欄: チェックボックスを2×2、音量・BGM音量のスライダーも左右に並べて高さを詰める */
+  /* 音の欄: チェックボックスを2×2、SE音量・ボイス音量のスライダーを左右に、その下に BGM音量と「試しに鳴らす」を並べて高さを詰める */
   .settings-screen .options-fields > .room-options-group {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1744,7 +1744,9 @@ h1, .round-badge, .log-title {
   .settings-screen .room-options-group > input.settings-volume:nth-of-type(1) { grid-area: 4 / 1; }
   .settings-screen .room-options-group > .settings-label:nth-of-type(2) { grid-area: 3 / 2; }
   .settings-screen .room-options-group > input.settings-volume:nth-of-type(2) { grid-area: 4 / 2; }
-  .settings-screen .room-options-group > .settings-reset-btn { grid-area: 5 / 1; justify-self: start; }
+  .settings-screen .room-options-group > .settings-label:nth-of-type(3) { grid-area: 5 / 1; }
+  .settings-screen .room-options-group > input.settings-volume:nth-of-type(3) { grid-area: 6 / 1; }
+  .settings-screen .room-options-group > .settings-reset-btn { grid-area: 5 / 2 / 7 / 3; justify-self: start; align-self: center; }
   .settings-screen .settings-volume { margin: 0; width: 100%; }
 }
 /* オプション画面のチェックボックス: 文字が長い場合はチェックボックスの横で折り返す(下に回り込まない) */

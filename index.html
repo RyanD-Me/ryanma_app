@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-gDtK/4JMAgVX/mdvGHNM3nN2yMr2a9p35jCUVT0GJpM=' 'sha256-HJQn2LEeYpYq0kN6HZzAbtZ6gPNzGge/stwuqf9YVHw=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-1k4KNqh/PZU3AM+l1jQBZCKJ+/UA71fN/baOayS1IWw=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-E0GyYGbaBoOiVHpEzS2ELBOOLDZ1Qwm4l9jtteQsvkQ=' 'sha256-5MZq8ZYSu1hqiLsX5djxNEkXWyjWO0D7mnlmyWCXO/Q=' 'sha256-HJQn2LEeYpYq0kN6HZzAbtZ6gPNzGge/stwuqf9YVHw=' 'sha256-RKBLMiX9a77Lu7j7dSHlujgDevkEkgcZMpTf/O+u+8M=' 'sha256-mPJ4BerETG01/VVj51NYC/3eyt2O3K9gYWwEB+XAcGg=' 'sha256-wkXrRtnJbBoF5rrO1M8tApvsxMAu+qoYIQcmkx+3zpA='; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src ws: wss:; media-src data: blob:; img-src data: blob:; base-uri 'none'; form-action 'none'; object-src 'none'" />
 <title>二麻オンライン</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1743,7 +1743,7 @@ h1, .round-badge, .log-title {
   .settings-screen .options-fields > .room-options-group { flex: 1 1 0; }
   .settings-screen .settings-field { gap: 4px; }
   .settings-screen .lobby-code-input { padding: 6px 10px; font-size: 0.9rem; }
-  /* 音の欄: チェックボックスを2×2、音量・BGM音量のスライダーも左右に並べて高さを詰める */
+  /* 音の欄: チェックボックスを2×2、SE音量・ボイス音量のスライダーを左右に、その下に BGM音量と「試しに鳴らす」を並べて高さを詰める */
   .settings-screen .options-fields > .room-options-group {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1755,7 +1755,9 @@ h1, .round-badge, .log-title {
   .settings-screen .room-options-group > input.settings-volume:nth-of-type(1) { grid-area: 4 / 1; }
   .settings-screen .room-options-group > .settings-label:nth-of-type(2) { grid-area: 3 / 2; }
   .settings-screen .room-options-group > input.settings-volume:nth-of-type(2) { grid-area: 4 / 2; }
-  .settings-screen .room-options-group > .settings-reset-btn { grid-area: 5 / 1; justify-self: start; }
+  .settings-screen .room-options-group > .settings-label:nth-of-type(3) { grid-area: 5 / 1; }
+  .settings-screen .room-options-group > input.settings-volume:nth-of-type(3) { grid-area: 6 / 1; }
+  .settings-screen .room-options-group > .settings-reset-btn { grid-area: 5 / 2 / 7 / 3; justify-self: start; align-self: center; }
   .settings-screen .settings-volume { margin: 0; width: 100%; }
 }
 /* オプション画面のチェックボックス: 文字が長い場合はチェックボックスの横で折り返す(下に回り込まない) */
@@ -5680,11 +5682,17 @@ function tenbouSoundLevel(scoreResult) {
 
 const MahjongSound = (() => {
   const STORAGE_KEY = "mahjong_sound_settings";
-  const DEFAULTS = { se: true, voice: true, volume: 0.8, muted: false, bgm: true, bgmVolume: 0.5 };
+  // volume: SE(効果音)の音量、voiceVolume: ボイス(発声)の音量、bgmVolume: BGMの音量(それぞれ別に調整する)
+  const DEFAULTS = { se: true, voice: true, volume: 0.8, voiceVolume: 0.8, muted: false, bgm: true, bgmVolume: 0.5 };
   let settings = Object.assign({}, DEFAULTS);
   try {
     const raw = typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY);
-    if (raw) settings = Object.assign(settings, JSON.parse(raw));
+    if (raw) {
+      const saved = JSON.parse(raw);
+      settings = Object.assign(settings, saved);
+      // ボイス音量が無い古い設定では、それまで共通だった音量をボイスにも使う
+      if (saved && typeof saved.voiceVolume !== "number" && typeof saved.volume === "number") settings.voiceVolume = saved.volume;
+    }
   } catch (e) {
     /* ignore */
   }
@@ -5970,8 +5978,9 @@ const MahjongSound = (() => {
   }
 
   function playVoice(word, cfg) {
-    if (cfg.muted || !cfg.voice || cfg.volume <= 0) return;
-    if (!playSample(word, cfg.volume)) speakText(word, cfg.volume);
+    const vol = typeof cfg.voiceVolume === "number" ? cfg.voiceVolume : cfg.volume;
+    if (cfg.muted || !cfg.voice || vol <= 0) return;
+    if (!playSample(word, vol)) speakText(word, vol);
   }
 
   /** 効果音(打牌音以外)を鳴らす。delayMs 後に鳴らす(同時に鳴る音と重ならないよう少しずらす) */
@@ -12855,12 +12864,20 @@ const MahjongLobby = (function () {
       const voiceCb = checkbox("発声", "(ポン・カン・リーチ・ロン・ツモ)", sound.voice);
       const bgmCb = checkbox("BGM", "(ロビー・待機画面)", sound.bgm);
       const muteCb = checkbox("消音", "(すべての音を消す)", sound.muted);
-      const volLabel = el("span", { className: "settings-label", textContent: `音量: ${Math.round(sound.volume * 100)}` });
+      // 音量は SE(効果音)・ボイス(発声)・BGM をそれぞれ別に調整する
+      const volLabel = el("span", { className: "settings-label", textContent: `SE音量: ${Math.round(sound.volume * 100)}` });
       const volInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
       volInput.value = String(Math.round(sound.volume * 100));
-      volInput.addEventListener("input", () => (volLabel.textContent = `音量: ${volInput.value}`));
+      volInput.addEventListener("input", () => (volLabel.textContent = `SE音量: ${volInput.value}`));
       soundGroup.appendChild(volLabel);
       soundGroup.appendChild(volInput);
+      const voiceVolume = typeof sound.voiceVolume === "number" ? sound.voiceVolume : sound.volume;
+      const voiceVolLabel = el("span", { className: "settings-label", textContent: `ボイス音量: ${Math.round(voiceVolume * 100)}` });
+      const voiceVolInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
+      voiceVolInput.value = String(Math.round(voiceVolume * 100));
+      voiceVolInput.addEventListener("input", () => (voiceVolLabel.textContent = `ボイス音量: ${voiceVolInput.value}`));
+      soundGroup.appendChild(voiceVolLabel);
+      soundGroup.appendChild(voiceVolInput);
       const bgmVolLabel = el("span", { className: "settings-label", textContent: `BGM音量: ${Math.round(sound.bgmVolume * 100)}` });
       const bgmVolInput = el("input", { type: "range", min: "0", max: "100", step: "5", className: "settings-volume" });
       bgmVolInput.value = String(Math.round(sound.bgmVolume * 100));
@@ -12873,7 +12890,12 @@ const MahjongLobby = (function () {
       soundGroup.appendChild(bgmVolInput);
       const previewBtn = el("button", { type: "button", className: "btn settings-reset-btn", textContent: "試しに鳴らす" });
       previewBtn.addEventListener("click", () =>
-        MahjongSound.preview({ se: seCb.checked, voice: voiceCb.checked, volume: Number(volInput.value) / 100 })
+        MahjongSound.preview({
+          se: seCb.checked,
+          voice: voiceCb.checked,
+          volume: Number(volInput.value) / 100,
+          voiceVolume: Number(voiceVolInput.value) / 100,
+        })
       );
       soundGroup.appendChild(previewBtn);
       fieldsBox.appendChild(soundGroup);
@@ -12893,6 +12915,7 @@ const MahjongLobby = (function () {
           bgmVolume: Number(bgmVolInput.value) / 100,
           muted: muteCb.checked,
           volume: Number(volInput.value) / 100,
+          voiceVolume: Number(voiceVolInput.value) / 100,
         });
         showLobby();
       });
