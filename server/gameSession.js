@@ -13,6 +13,14 @@
  *   - 手牌に無い牌を切る・点数を書き換える・勝手に和了する、などはサーバーが受け付けない
  * ようになる。
  *
+ * 不正対策として、さらに次のことを行う。
+ *   - 牌山のシャッフルには暗号用の乱数を使う(シード値から再現できる乱数だと、自分の配牌から
+ *     総当たりで牌山全体を割り出されてしまうため)
+ *   - 相手が鳴けない捨て牌でも、ときどき(PASS_DELAY_CHANCE)ランダムな時間だけ待ってから進める
+ *     (鳴ける時だけ相手の判断を待つと、待ち時間で「相手が鳴ける」と分かってしまうため)
+ *   - 持ち時間(打牌ごと+局ごと)をサーバーでも数え、切れたら代わりに進める(改造したページが
+ *     持ち時間を無視して考え続けられないように)
+ *
  * 局面の進め方は、ブラウザ側の MahjongApp(frontend/app.js)の doDiscard / doTsumo / doRon /
  * doPon / doMinkan / doAnkan / doKakan / doPass / autoAdvance / nextRound と同じ手順にしてある
  * (どちらもエンジンの同じ関数を呼ぶ)。進め方を変えるときは両方を直すこと。
@@ -26,8 +34,22 @@ const SEATS = ["east", "south"];
 const DEAL_ANIMATION_MS = 300 * 10;
 /** 結果画面の自動送り(フロントの RESULT_AUTO_ADVANCE_MS 15秒 + 和了表示 1.5秒 + 余裕) */
 const RESULT_AUTO_ADVANCE_MS = 18000;
-/** 持ち時間を過ぎても操作が届かない場合に、サーバーが代わりに進めるまでの余裕(通信の遅れを見込む) */
-const TIMEOUT_GRACE_MS = 5000;
+/**
+ * 持ち時間の計算で見込む通信の遅れ(1つの判断ごと)。サーバーは、局面を送ってから操作が届くまでの時間から
+ * これを差し引いて持ち時間を減らし、打牌ごと+残りの局ごと+これ を過ぎたら代わりに進める
+ * (通常はクライアントの持ち時間の処理が先に操作を送ってくる)。
+ */
+const TIME_ALLOWANCE_MS = 2000;
+/** 相手が鳴けない捨て牌でも、この確率でランダムな時間だけ待ってから進める */
+const PASS_DELAY_CHANCE = 0.2;
+/** そのときの待ち時間(ミリ秒)の範囲 */
+const PASS_DELAY_MIN_MS = 700;
+const PASS_DELAY_MAX_MS = 1800;
+
+/** 暗号用の乱数(0以上1未満)。牌山のシャッフルと、見送りの待ちを入れるかどうかに使う(予測されないように) */
+function secureRandom() {
+  return crypto.randomInt(0, 2 ** 48 - 1) / 2 ** 48;
+}
 /** 持ち時間なしの対局でも、1つの判断にこれ以上かかったらサーバーが代わりに進める(放置で止まらないように) */
 const MAX_DECISION_MS = 10 * 60 * 1000;
 
@@ -51,8 +73,10 @@ function normalizeTimeControl(tc) {
 class GameSession {
   /**
    * @param {{timeControl?: object|null, dealerChoice?: "self"|"opponent"|"random", random?: Function,
-   *          setTimer?: Function, clearTimer?: Function, onUpdate?: Function, gameId?: string}} options
+   *          setTimer?: Function, clearTimer?: Function, onUpdate?: Function, gameId?: string,
+   *          now?: Function, secureRandom?: Function, passDelayChance?: number}} options
    *   dealerChoice は east 席(ルーム作成者)から見た起家の決め方。onUpdate はタイマーで局面が進んだ時に呼ぶ。
+   *   now・secureRandom・passDelayChance はテストで差し替えるためのもの。
    */
   constructor(options = {}) {
     this.timeControl = normalizeTimeControl(options.timeControl === undefined ? { perAction: 5, bank: 20 } : options.timeControl);
@@ -60,6 +84,9 @@ class GameSession {
     this.random = options.random || Math.random;
     this.setTimer = options.setTimer || ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = options.clearTimer || ((t) => clearTimeout(t));
+    this.now = options.now || (() => Date.now());
+    this.secureRandom = options.secureRandom || secureRandom;
+    this.passDelayChance = options.passDelayChance != null ? options.passDelayChance : PASS_DELAY_CHANCE;
     this.onUpdate = options.onUpdate || (() => {});
     this.gameId = options.gameId || "online";
     this.state = null;
@@ -77,8 +104,14 @@ class GameSession {
     this.version = 0;
     this._callSeq = 0;
     this._dealPending = false;
-    this._timers = { deal: null, decision: null, result: null };
+    this._timers = { deal: null, decision: null, result: null, pass: null };
+    /** いま時間を計っている判断 {seat, kind, round, turn, startedAt, bankAtStart} */
     this._decisionKey = null;
+    /** 各家の「局ごと」の残り時間(ミリ秒)と、それを数えている局 */
+    this._bankMs = { east: 0, south: 0 };
+    this._bankRound = null;
+    /** 見送りの前にわざと入れている待ち {key, done}(key はどの捨て牌に対してか) */
+    this._passDelay = null;
     this.destroyed = false;
   }
 
@@ -93,7 +126,7 @@ class GameSession {
   /** 新しい対局(最初の対局・再戦)を始める */
   start() {
     const dealer = this.chooseStartingDealer();
-    const { wall } = E.buildWall(crypto.randomInt(0, 2 ** 31 - 1));
+    const { wall } = E.buildWall(this.secureRandom);
     const revealed = E.revealNextDoraIndicator(wall);
     const { wall: dealtWall, hands } = E.dealInitialHands(revealed, [dealer, otherSeat(dealer)]);
     this.state = {
@@ -142,7 +175,7 @@ class GameSession {
     }
     const continues = E.determineDealerContinuation(this.state, tenpaiSeats);
     const prevSerial = this.state.roundSerial || 0;
-    this.state = Object.assign({}, E.advanceRound(this.state, continues, crypto.randomInt(0, 2 ** 31 - 1)), {
+    this.state = Object.assign({}, E.advanceRound(this.state, continues, this.secureRandom), {
       roundSerial: prevSerial + 1,
     });
     this.revealUraDora = false;
@@ -196,8 +229,19 @@ class GameSession {
     const s = this.state;
     if (!s || this._dealPending) return null;
     if (s.phase === "discard" || s.phase === "kan_replacement") return { seat: s.currentTurn, kind: "discard" };
-    if (s.phase === "call_window" && s.lastDiscard) return { seat: otherSeat(s.lastDiscard.from), kind: "call" };
+    if (s.phase === "call_window" && s.lastDiscard) {
+      // 鳴けない捨て牌の見送りを、わざと待たせている間は誰の判断でもない
+      if (this._passDelay && !this._passDelay.done && this._passDelay.key === this._discardKey()) return null;
+      return { seat: otherSeat(s.lastDiscard.from), kind: "call" };
+    }
     return null;
+  }
+
+  /** いまの捨て牌を表すキー(見送りの待ちがどの捨て牌に対するものかを見分ける) */
+  _discardKey() {
+    const s = this.state;
+    const n = s.players.east.discards.length + s.players.south.discards.length;
+    return `${s.roundSerial}:${n}:${s.lastDiscard ? s.lastDiscard.tile.id : "-"}`;
   }
 
   // ---------------- 操作 ----------------
@@ -347,11 +391,32 @@ class GameSession {
       if (s.phase === "call_window") {
         const { canRon, canPon, canMinkan } = this.callOptions(otherSeat(s.lastDiscard.from));
         if (canRon || canPon || canMinkan) break;
+        // 鳴けない場合も、ときどきランダムな時間だけ待ってから見送る(待ち時間で鳴けるかどうかを悟られないように)
+        const key = this._discardKey();
+        if (this._passDelay && this._passDelay.key === key) {
+          if (!this._passDelay.done) break;
+        } else if (this.passDelayChance > 0 && this.secureRandom() < this.passDelayChance) {
+          this._startPassDelay(key);
+          break;
+        }
         this.state = E.passDiscard(s);
         continue;
       }
       break;
     }
+  }
+
+  _startPassDelay(key) {
+    this._passDelay = { key, done: false };
+    this._clearTimer("pass");
+    const ms = PASS_DELAY_MIN_MS + this.secureRandom() * (PASS_DELAY_MAX_MS - PASS_DELAY_MIN_MS);
+    this._timers.pass = this.setTimer(() => {
+      this._timers.pass = null;
+      if (this.destroyed || !this._passDelay || this._passDelay.key !== key) return;
+      this._passDelay.done = true;
+      this._afterChange();
+      this.onUpdate();
+    }, ms);
   }
 
   /** 結果画面での点数の増減(MahjongApp#trackRoundScoreChange と同じ) */
@@ -410,22 +475,33 @@ class GameSession {
     } else {
       this._clearTimer("result");
     }
-    // 判断待ち: 持ち時間を大きく過ぎても操作が届かなければ、サーバーが代わりに進める
-    // (改造したクライアントが操作を送らずに対局を止め続けられないように)。通常はクライアント側の
-    // 持ち時間の処理が先に操作を送ってくるので、これが働くのは操作が届かない場合だけ。
-    const d = this.pendingDecision();
-    if (!d) {
-      this._clearTimer("decision");
-      this._decisionKey = null;
-      return;
-    }
-    const sameDecision =
-      this._decisionKey && this._decisionKey.seat === d.seat && this._decisionKey.kind === d.kind && this._decisionKey.round === s.roundSerial && this._decisionKey.turn === this._turnMarker();
-    if (sameDecision) return;
-    this._clearTimer("decision");
-    this._decisionKey = { seat: d.seat, kind: d.kind, round: s.roundSerial, turn: this._turnMarker() };
+    // 持ち時間: 局が変わったら両家の「局ごと」の残り時間を満タンに戻す
     const tc = this.timeControl;
-    const ms = tc ? (tc.perAction + tc.bank) * 1000 + TIMEOUT_GRACE_MS : MAX_DECISION_MS;
+    if (s.roundSerial !== this._bankRound) {
+      this._bankRound = s.roundSerial;
+      const bank = tc ? tc.bank * 1000 : 0;
+      this._bankMs = { east: bank, south: bank };
+      this._decisionKey = null;
+    }
+    // 判断待ち: 持ち時間(打牌ごと+残りの局ごと+通信の遅れの見込み)を過ぎても操作が届かなければ、
+    // サーバーが代わりに進める(改造したページが持ち時間を無視したり、操作を送らずに対局を止め続けたり
+    // できないように)。通常はクライアント側の持ち時間の処理が先に操作を送ってくる。
+    const d = this.pendingDecision();
+    const cur = this._decisionKey;
+    const sameDecision =
+      cur && d && cur.seat === d.seat && cur.kind === d.kind && cur.round === s.roundSerial && cur.turn === this._turnMarker();
+    if (sameDecision) return;
+    // 前の判断が終わった: 打牌ごとの時間を超えて使った分を、その家の「局ごと」の残り時間から引く
+    if (cur && tc && cur.round === s.roundSerial) {
+      const used = Math.max(0, this.now() - cur.startedAt - tc.perAction * 1000 - TIME_ALLOWANCE_MS);
+      this._bankMs[cur.seat] = Math.max(0, cur.bankAtStart - used);
+    }
+    this._clearTimer("decision");
+    this._decisionKey = null;
+    if (!d) return;
+    const bankAtStart = this._bankMs[d.seat] || 0;
+    this._decisionKey = { seat: d.seat, kind: d.kind, round: s.roundSerial, turn: this._turnMarker(), startedAt: this.now(), bankAtStart };
+    const ms = tc ? tc.perAction * 1000 + bankAtStart + TIME_ALLOWANCE_MS : MAX_DECISION_MS;
     this._timers.decision = this.setTimer(() => {
       this._timers.decision = null;
       if (this.destroyed) return;
@@ -546,4 +622,12 @@ function safeKindKey(kind) {
   return null;
 }
 
-module.exports = { GameSession, normalizeTimeControl, DEAL_ANIMATION_MS, RESULT_AUTO_ADVANCE_MS };
+module.exports = {
+  GameSession,
+  normalizeTimeControl,
+  DEAL_ANIMATION_MS,
+  RESULT_AUTO_ADVANCE_MS,
+  TIME_ALLOWANCE_MS,
+  PASS_DELAY_MIN_MS,
+  PASS_DELAY_MAX_MS,
+};
